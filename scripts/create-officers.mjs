@@ -1,24 +1,24 @@
 /**
  * One-time officer account bootstrap (alternative to supabase/seed-officers.sql).
  *
- * 1. Edit the OFFICERS list below (emails + strong passwords).
+ * The shared officer accounts are name-based logins: nobody reads these
+ * inboxes, the @lacc.local addresses only exist because Supabase auth needs
+ * an email-shaped identifier. The login form maps role -> address
+ * (see OFFICER_ACCOUNTS in src/lib/roles.ts).
+ *
+ * 1. Put the three passwords in .env.local:
+ *    OFFICER_PASSWORD_PRESIDENT / _VICE_PRESIDENT / _COORDINATOR
  * 2. Make sure .env.local has NEXT_PUBLIC_SUPABASE_URL and
  *    SUPABASE_SERVICE_ROLE_KEY filled in.
  * 3. Run:  node scripts/create-officers.mjs
  *
- * Creates the three shared officer logins (email + password, pre-confirmed)
- * and promotes their member rows. Re-running is safe: existing users are
- * skipped, roles are re-applied.
+ * Creates the three shared officer logins (pre-confirmed) and promotes their
+ * member rows. Re-running is safe: existing users are skipped, roles are
+ * re-applied.
  */
 
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-
-const OFFICERS = [
-  { email: "president@example.com", password: "CHANGE-ME-president", role: "president", name: "President" },
-  { email: "vice.president@example.com", password: "CHANGE-ME-vp", role: "vice_president", name: "Vice President" },
-  { email: "volunteer.coordinator@example.com", password: "CHANGE-ME-vc", role: "volunteer_coordinator", name: "Volunteer Coordinator" },
-];
 
 // --- read .env.local ---------------------------------------------------
 const env = {};
@@ -33,13 +33,20 @@ if (!url || !serviceKey) {
   process.exit(1);
 }
 
+// Keep the emails in sync with OFFICER_ACCOUNTS in src/lib/roles.ts.
+const OFFICERS = [
+  { email: "president@lacc.local", password: env.OFFICER_PASSWORD_PRESIDENT ?? "CHANGE-ME", role: "president", name: "President" },
+  { email: "vice.president@lacc.local", password: env.OFFICER_PASSWORD_VICE_PRESIDENT ?? "CHANGE-ME", role: "vice_president", name: "Vice President" },
+  { email: "volunteer.coordinator@lacc.local", password: env.OFFICER_PASSWORD_COORDINATOR ?? "CHANGE-ME", role: "volunteer_coordinator", name: "Volunteer Coordinator" },
+];
+
 const supabase = createClient(url, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
 for (const officer of OFFICERS) {
   if (officer.password.startsWith("CHANGE-ME")) {
-    console.error(`Set a real password for ${officer.email} before running.`);
+    console.error(`Missing password for ${officer.name} — set the OFFICER_PASSWORD_* vars in .env.local.`);
     process.exit(1);
   }
 

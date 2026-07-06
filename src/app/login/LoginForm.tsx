@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/Brand";
+import { OFFICER_ACCOUNTS, OFFICER_ROLES, ROLE_LABELS } from "@/lib/roles";
 
 type Mode = "member" | "officer";
 
@@ -24,7 +25,7 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
           <p className="mt-2 text-muted">
             {mode === "member"
               ? "We'll email you a one-tap login link."
-              : "Shared officer account — email and password."}
+              : "Shared officer account — pick your role and enter its password."}
           </p>
         </div>
 
@@ -139,7 +140,7 @@ function MemberLogin({ initialError }: { initialError?: string | null }) {
 
 function OfficerLogin() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<(typeof OFFICER_ROLES)[number]>("president");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -151,13 +152,18 @@ function OfficerLogin() {
 
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      // Shared officer logins are name-based; the address is synthetic.
+      email: OFFICER_ACCOUNTS[role],
       password,
     });
 
     if (error) {
       setStatus("error");
-      setMessage(error.message);
+      setMessage(
+        error.message === "Invalid login credentials"
+          ? "Wrong password for that role."
+          : error.message,
+      );
       return;
     }
     // /me routes officer accounts on to the officer dashboard.
@@ -167,16 +173,22 @@ function OfficerLogin() {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <input
-        type="email"
-        inputMode="email"
-        autoComplete="username"
-        required
-        placeholder="officer email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
-      />
+      <div className="flex flex-col gap-2">
+        {OFFICER_ROLES.map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() => setRole(r)}
+            className={`rounded-2xl border px-5 py-3 text-left text-lg transition ${
+              role === r
+                ? "border-accent bg-accent/10 font-semibold"
+                : "border-border bg-surface text-muted"
+            }`}
+          >
+            {ROLE_LABELS[r]}
+          </button>
+        ))}
+      </div>
       <input
         type="password"
         autoComplete="current-password"

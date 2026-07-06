@@ -15,6 +15,18 @@ export const ROLE_LABELS: Record<Role, string> = {
   volunteer_coordinator: "Volunteer Coordinator",
 };
 
+/**
+ * Shared officer logins are name-based: the form shows the role name and maps
+ * it to a synthetic @lacc.local address (Supabase auth requires an
+ * email-shaped identifier; nobody reads these inboxes). Keep in sync with
+ * scripts/create-officers.mjs.
+ */
+export const OFFICER_ACCOUNTS: Record<(typeof OFFICER_ROLES)[number], string> = {
+  president: "president@lacc.local",
+  vice_president: "vice.president@lacc.local",
+  volunteer_coordinator: "volunteer.coordinator@lacc.local",
+};
+
 export function isOfficer(role: string | null | undefined): boolean {
   return (OFFICER_ROLES as readonly string[]).includes(role ?? "");
 }
