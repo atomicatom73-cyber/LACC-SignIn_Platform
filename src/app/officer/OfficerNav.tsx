@@ -15,7 +15,12 @@ export function OfficerNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="mt-6 flex gap-2 overflow-x-auto pb-1 text-sm font-medium">
+    // Sticky with a solid backdrop and its own stacking context: the tabs
+    // stay reachable while scrolling and nothing can render on top of them.
+    // shrink-0 matters: overflow-x-auto strips the automatic flex minimum
+    // size, and without it the surrounding flex columns squash the tabs into
+    // a clipped sliver.
+    <nav className="sticky top-0 z-20 -mx-5 mt-4 flex shrink-0 gap-2 overflow-x-auto bg-background/95 px-5 py-3 text-sm font-medium backdrop-blur supports-[backdrop-filter]:bg-background/80">
       {TABS.map((tab) => {
         const active =
           tab.href === "/officer"

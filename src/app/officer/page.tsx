@@ -40,7 +40,7 @@ export default async function OfficerOverviewPage() {
   const firstName = member.full_name.split(" ")[0];
 
   return (
-    <main>
+    <main className="anim-fade">
       <h1 className="text-2xl font-bold tracking-tight">
         Welcome, {firstName}
       </h1>
@@ -48,7 +48,7 @@ export default async function OfficerOverviewPage() {
         Officer dashboard — {monthLabel(month)}.
       </p>
 
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="anim-stagger mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Active members" value={String(memberCount)} />
         <Stat label="In the studio now" value={String(inStudio)} />
         <Stat
@@ -62,7 +62,7 @@ export default async function OfficerOverviewPage() {
         />
       </div>
 
-      <div className="mt-8 grid gap-4 sm:grid-cols-2">
+      <div className="anim-stagger mt-8 grid gap-4 sm:grid-cols-2">
         <QuickLink
           href="/officer/chores"
           title="Chores"

@@ -69,7 +69,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
           No one matches “{query}”. Ask an officer to add you to the roster.
         </p>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="anim-stagger grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {visible.map((m) => (
             <RosterCard
               key={m.id}
@@ -84,7 +84,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
       <div
         role="status"
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 bottom-8 flex justify-center px-4"
+        className="pointer-events-none fixed inset-x-0 bottom-[max(2rem,env(safe-area-inset-bottom))] flex justify-center px-4"
       >
         {toast && (
           <div className="rounded-full bg-foreground px-6 py-3 text-lg font-semibold text-background shadow-lg">

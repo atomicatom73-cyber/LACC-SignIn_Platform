@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import { canManageMembers, canManageRoles, type Role } from "@/lib/roles";
+import { canManageMembers, type Role } from "@/lib/roles";
 import { formatStudioDate, monthKey, monthLabel } from "@/lib/studio";
 import type { Absence, ChoreCredit } from "@/lib/types";
 import {
@@ -11,7 +11,6 @@ import {
   revokeCredit,
   setActive,
 } from "./actions";
-import { RoleSelect } from "./RoleSelect";
 
 export type ChipTone = "muted" | "accent" | "success" | "danger" | "info";
 
@@ -186,34 +185,28 @@ export function MemberDetail({
         )}
       </section>
 
-      {(canManageMembers(viewerRole) || canManageRoles(viewerRole)) && (
+      {canManageMembers(viewerRole) && member.role === "member" && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface-2 px-3 py-3 sm:col-span-2">
-          {canManageMembers(viewerRole) && (
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-medium">
-                  {member.active ? "Active member" : "Deactivated"}
-                </div>
-                <p className="mt-0.5 text-xs text-muted">
-                  Deactivated members leave the kiosk roster and chore rotation
-                  but keep their history.
-                </p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">
+                {member.active ? "Active member" : "Deactivated"}
               </div>
-              <button
-                onClick={() => run(() => setActive(member.id, !member.active))}
-                disabled={pending}
-                className={`shrink-0 rounded-xl px-3 py-2.5 text-sm font-semibold text-background transition active:scale-[0.98] disabled:opacity-60 ${
-                  member.active ? "bg-danger" : "bg-success"
-                }`}
-              >
-                {member.active ? "Deactivate" : "Reactivate"}
-              </button>
+              <p className="mt-0.5 text-xs text-muted">
+                Deactivated members leave the kiosk roster and chore rotation
+                but keep their history.
+              </p>
             </div>
-          )}
-
-          {canManageRoles(viewerRole) && (
-            <RoleSelect memberId={member.id} currentRole={member.role} />
-          )}
+            <button
+              onClick={() => run(() => setActive(member.id, !member.active))}
+              disabled={pending}
+              className={`shrink-0 rounded-xl px-3 py-2.5 text-sm font-semibold text-background transition active:scale-[0.98] disabled:opacity-60 ${
+                member.active ? "bg-danger" : "bg-success"
+              }`}
+            >
+              {member.active ? "Deactivate" : "Reactivate"}
+            </button>
+          </div>
         </section>
       )}
 

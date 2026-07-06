@@ -112,10 +112,10 @@ export default async function OfficerMembersPage() {
   ];
 
   return (
-    <main>
+    <main className="anim-fade">
       <h1 className="text-2xl font-bold tracking-tight">Members</h1>
       <p className="mt-1 text-muted">
-        Roster, chore credits, absences, and roles.
+        Roster, chore credits, and absences.
       </p>
 
       {canManageMembers(viewer.role) && (

@@ -61,7 +61,7 @@ export default async function OfficerMessagesPage() {
   );
 
   return (
-    <main>
+    <main className="anim-fade">
       <h1 className="text-2xl font-bold tracking-tight">Announcements</h1>
       <p className="mt-1 text-muted">
         Send studio news to members and track who has read it.

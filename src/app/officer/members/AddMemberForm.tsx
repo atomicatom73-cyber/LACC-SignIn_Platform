@@ -16,8 +16,8 @@ export function AddMemberForm() {
         Add a member
       </h2>
       <p className="mt-1 text-xs text-muted">
-        They appear on the kiosk right away and can claim the account later by
-        logging in with their email.
+        They appear on the kiosk right away. If they later create an account
+        with the same name, ask an officer to tidy any duplicate row.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <input

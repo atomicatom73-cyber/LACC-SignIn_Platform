@@ -36,7 +36,7 @@ export default async function InboxPage() {
   const unread = items.filter((item) => item.read_at === null).length;
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col px-5 py-6">
+    <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-md flex-col px-5 py-6">
       <Link href="/me" className="inline-block text-sm text-muted">
         ← Back
       </Link>

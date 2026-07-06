@@ -4,7 +4,7 @@ import { Logo } from "@/components/Brand";
 export default function Home() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm">
+      <div className="anim-fade w-full max-w-sm">
         <div className="mb-10 flex flex-col items-center text-center">
           <Logo className="mb-5 h-16 w-16 text-2xl" />
           <h1 className="text-3xl font-bold tracking-tight">LACC Studio</h1>

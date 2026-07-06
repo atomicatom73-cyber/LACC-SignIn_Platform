@@ -225,9 +225,10 @@ create trigger on_auth_user_created
 -- Guard triggers
 -- ---------------------------------------------------------------------------
 
--- Only the president (or server-side service role, where auth.uid() is null)
--- may change anyone's role — the vice president explicitly cannot, not even
--- their own.
+-- Roles are permanently fixed: the three officer roles belong to the shared
+-- officer accounts and everyone else is a member. No client session may
+-- change any role — only the server-side service role (auth.uid() is null),
+-- which the one-time bootstrap script uses.
 create or replace function public.protect_role_change()
 returns trigger
 language plpgsql security definer
@@ -235,8 +236,8 @@ set search_path = public
 as $$
 begin
   if new.role is distinct from old.role then
-    if auth.uid() is not null and coalesce(public.my_role(), '') <> 'president' then
-      raise exception 'Only the president can change roles.';
+    if auth.uid() is not null then
+      raise exception 'Roles are fixed and cannot be changed.';
     end if;
   end if;
   return new;

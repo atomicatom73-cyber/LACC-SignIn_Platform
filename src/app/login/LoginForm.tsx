@@ -5,16 +5,35 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/Brand";
-import { OFFICER_ACCOUNTS, OFFICER_ROLES, ROLE_LABELS } from "@/lib/roles";
+import {
+  OFFICER_ACCOUNTS,
+  OFFICER_ROLES,
+  ROLE_LABELS,
+  memberLoginEmail,
+} from "@/lib/roles";
+import { registerMember } from "./actions";
 
 type Mode = "member" | "officer";
+
+/**
+ * Turn any thrown value into a message the person at the studio can act on.
+ * A misconfigured deployment (missing env vars) used to throw synchronously
+ * and freeze the button at "Signing in…" — never again.
+ */
+function describeError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/supabase|url|key|env/i.test(message)) {
+    return `The app isn't fully set up (${message}). Tell an officer to check the deployment settings.`;
+  }
+  return message || "Something went wrong — please try again.";
+}
 
 export function LoginForm({ initialError }: { initialError?: string | null }) {
   const [mode, setMode] = useState<Mode>("member");
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm">
+      <div className="anim-fade w-full max-w-sm">
         <Link href="/" className="mb-8 inline-block text-sm text-muted">
           ← Back
         </Link>
@@ -24,7 +43,7 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
           <h1 className="text-2xl font-bold tracking-tight">Welcome back</h1>
           <p className="mt-2 text-muted">
             {mode === "member"
-              ? "We'll email you a one-tap login link."
+              ? "Just your name and password."
               : "Shared officer account — pick your role and enter its password."}
           </p>
         </div>
@@ -50,74 +69,96 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
           </button>
         </div>
 
-        {mode === "member" ? (
-          <MemberLogin initialError={initialError} />
-        ) : (
-          <OfficerLogin />
-        )}
+        <div key={mode} className="anim-fade">
+          {mode === "member" ? (
+            <MemberLogin initialError={initialError} />
+          ) : (
+            <OfficerLogin />
+          )}
+        </div>
       </div>
     </main>
   );
 }
 
 function MemberLogin({ initialError }: { initialError?: string | null }) {
-  const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
+  const router = useRouter();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "error">(
     initialError ? "error" : "idle",
   );
   const [message, setMessage] = useState(initialError ?? "");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!email) return;
     setStatus("sending");
     setMessage("");
 
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/confirm?next=/me`,
-      },
-    });
+    try {
+      let email = memberLoginEmail(name);
 
-    if (error) {
+      if (creating) {
+        const result = await registerMember(name, password);
+        if ("error" in result) {
+          setStatus("error");
+          setMessage(result.error);
+          return;
+        }
+        email = result.email;
+      }
+
+      if (!email) {
+        setStatus("error");
+        setMessage("Please use letters or numbers in your name.");
+        return;
+      }
+
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        // Name-based login: the address is synthetic, derived from the name.
+        email,
+        password,
+      });
+
+      if (error) {
+        setStatus("error");
+        setMessage(
+          error.message === "Invalid login credentials"
+            ? "No account matches that name and password. Check the spelling — or create an account below."
+            : error.message,
+        );
+        return;
+      }
+
+      router.push("/me");
+      router.refresh();
+    } catch (err) {
       setStatus("error");
-      setMessage(error.message);
-    } else {
-      setStatus("sent");
+      setMessage(describeError(err));
     }
-  }
-
-  if (status === "sent") {
-    return (
-      <div className="rounded-2xl border border-border bg-surface p-6 text-center">
-        <div className="text-4xl">📬</div>
-        <p className="mt-3 font-semibold">Check your email</p>
-        <p className="mt-1 text-sm text-muted">
-          We sent a login link to <br />
-          <span className="text-foreground">{email}</span>
-        </p>
-        <button
-          onClick={() => setStatus("idle")}
-          className="mt-5 text-sm text-accent"
-        >
-          Use a different email
-        </button>
-      </div>
-    );
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <input
-        type="email"
-        inputMode="email"
-        autoComplete="email"
+        type="text"
+        autoComplete="name"
         required
-        placeholder="you@example.com"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
+        placeholder="Your full name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
+      />
+      <input
+        type="password"
+        autoComplete={creating ? "new-password" : "current-password"}
+        required
+        minLength={creating ? 8 : undefined}
+        placeholder={creating ? "Choose a password (8+ characters)" : "Password"}
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
         className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
       />
       <button
@@ -125,15 +166,36 @@ function MemberLogin({ initialError }: { initialError?: string | null }) {
         disabled={status === "sending"}
         className="rounded-2xl bg-accent px-6 py-4 text-lg font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
       >
-        {status === "sending" ? "Sending…" : "Send login link"}
+        {status === "sending"
+          ? creating
+            ? "Creating account…"
+            : "Signing in…"
+          : creating
+            ? "Create account"
+            : "Sign in"}
       </button>
       {status === "error" && (
         <p className="text-center text-sm text-danger">{message}</p>
       )}
-      <p className="text-center text-xs text-muted">
-        New here? Enter your email and we&apos;ll set up your member account
-        from the same link.
-      </p>
+      <button
+        type="button"
+        onClick={() => {
+          setCreating((v) => !v);
+          setStatus("idle");
+          setMessage("");
+        }}
+        className="text-center text-sm text-accent"
+      >
+        {creating
+          ? "Already have an account? Sign in"
+          : "New here? Create an account"}
+      </button>
+      {creating && (
+        <p className="text-center text-xs text-muted">
+          No email needed — your name is your login. Use the same name the
+          studio knows you by.
+        </p>
+      )}
     </form>
   );
 }
@@ -150,25 +212,30 @@ function OfficerLogin() {
     setStatus("sending");
     setMessage("");
 
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({
-      // Shared officer logins are name-based; the address is synthetic.
-      email: OFFICER_ACCOUNTS[role],
-      password,
-    });
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        // Shared officer logins are name-based; the address is synthetic.
+        email: OFFICER_ACCOUNTS[role],
+        password,
+      });
 
-    if (error) {
+      if (error) {
+        setStatus("error");
+        setMessage(
+          error.message === "Invalid login credentials"
+            ? "Wrong password for that role."
+            : error.message,
+        );
+        return;
+      }
+      // /me routes officer accounts on to the officer dashboard.
+      router.push("/me");
+      router.refresh();
+    } catch (err) {
       setStatus("error");
-      setMessage(
-        error.message === "Invalid login credentials"
-          ? "Wrong password for that role."
-          : error.message,
-      );
-      return;
+      setMessage(describeError(err));
     }
-    // /me routes officer accounts on to the officer dashboard.
-    router.push("/me");
-    router.refresh();
   }
 
   return (

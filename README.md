@@ -17,20 +17,26 @@ Built with **Next.js 16** (App Router), **React 19**, **Supabase**
 | Calendar | `/calendar` | Everyone signed in | Classes, workshops, parties, camps. President & VP can add/edit events inline. |
 | Officer dashboard | `/officer` | Officers | Overview stats + tabs for Chores, Members, Messages. |
 | Chores | `/officer/chores` | Officers (Volunteer Coordinator's home) | Master view of every member's chores per month, the chore catalog, manual assignment, and the **monthly reshuffle draft** (credit-aware, no repeats). |
-| Members | `/officer/members` | Officers | Roster admin, chore credits, absence marking (retroactive OK), history. Role changes are president-only. |
+| Members | `/officer/members` | Officers | Roster admin, chore credits, absence marking (retroactive OK), history. Roles are fixed — no role changes, by design. |
 | Messages | `/officer/messages` | Officers | Compose announcements to all members or a hand-picked list; see who's read what. |
 
 ### Accounts and roles
 
-- **Members** self-serve: they enter their email at `/login` and get a
-  magic link. A member profile is created automatically on first login.
+- **No emails anywhere.** Everyone signs in with a name + password; behind
+  the scenes each account gets a synthetic identifier (`*@lacc.local` for
+  officers, `*@member.lacc.local` for members) because Supabase auth needs an
+  email-shaped string. No verification emails are ever sent.
+- **Members** self-serve: "Create an account" on `/login` with their name and
+  a password. A member profile is created automatically.
 - **Officer accounts are shared logins**, not people: `president`,
-  `vice_president`, and `volunteer_coordinator`. They're created once (below)
-  and the credentials are handed to whoever currently holds the role. Officers
+  `vice_president`, and `volunteer_coordinator`. On the login screen officers
+  just tap their role and enter its password. They're created once (below)
+  and the password is handed to whoever currently holds the role. Officers
   also keep their own personal member account.
-- Permissions: the **President** can do everything. The **Vice President**
-  can do everything *except* change roles (including their own). The
-  **Volunteer Coordinator** runs chores, credits, and absences.
+- Permissions: the **President** and **Vice President** manage members and
+  the calendar; the **Volunteer Coordinator** runs chores, credits, and
+  absences. **Roles are permanently fixed** — there is no role-change UI and
+  the database trigger rejects role updates from any client session.
 
 ### The chore system
 
@@ -83,13 +89,12 @@ cp .env.local.example .env.local
 
 Pick one:
 
-- **Script** (easiest): edit the emails/passwords at the top of
-  [`scripts/create-officers.mjs`](scripts/create-officers.mjs), then
-  `node scripts/create-officers.mjs`.
-- **Dashboard**: Authentication → Users → *Add user* (email + password,
-  auto-confirm) for the three accounts, then edit the emails in
-  [`supabase/seed-officers.sql`](supabase/seed-officers.sql) and run it in the
-  SQL Editor.
+- **Script** (easiest): put the three `OFFICER_PASSWORD_*` values in
+  `.env.local`, then `node scripts/create-officers.mjs`.
+- **Dashboard**: Authentication → Users → *Add user* (auto-confirm) for the
+  three `@lacc.local` accounts listed in
+  [`supabase/seed-officers.sql`](supabase/seed-officers.sql), then run that
+  file in the SQL Editor.
 
 Hand each login to the current officeholder. When a role changes hands, just
 change the account password and hand it over again.
@@ -102,12 +107,12 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Log in as an officer
 (Officer tab on the login screen) to set up the chore catalog and calendar;
-members onboard themselves with the magic-link flow.
+members onboard themselves with name + password.
 
 ## Adding members
 
-Members appear automatically on first magic-link login. For kiosk-only folks
-(no smartphone/email), officers can add them by name on
+Members appear automatically when they create an account. For kiosk-only
+folks (no smartphone), officers can add them by name on
 **Officer → Members → Add member**; only `active` members show on the kiosk
 roster.
 
@@ -117,15 +122,15 @@ roster.
 src/
   app/
     page.tsx              Landing (my account vs. quick sign-in)
-    login/                Member magic-link + shared officer password login
-    auth/confirm/         Magic-link callback
+    login/                Name + password login (members and shared officer roles)
+    auth/confirm/         OTP-link callback (kept for tooling/debug links)
     me/                   Member home: clock in/out, chores, inbox link, events
     me/inbox/             Announcements inbox (loud unread banner)
     kiosk/                PIN-gated quick sign-in roster with search
     calendar/             Studio calendar (president/VP can edit inline)
     officer/              Officer shell + overview
     officer/chores/       Month view, catalog, assignment, monthly reshuffle
-    officer/members/      Roster admin, credits, absences, roles
+    officer/members/      Roster admin, credits, absences
     officer/messages/     Compose announcements + read receipts
   components/             Brand, announcements banner
   lib/
@@ -145,7 +150,10 @@ scripts/
 ## Deploying
 
 Deploy to [Vercel](https://vercel.com/new): add the four environment variables
-and set Supabase **Auth → URL Configuration** (Site URL + redirect list) to
-your deployed domain so magic links resolve. Optionally enable `pg_cron` in
-Supabase and schedule `select public.close_stale_shifts();` nightly — the app
-also does this lazily on page loads, so cron is belt-and-suspenders.
+(`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `KIOSK_PIN`) under **Project → Settings →
+Environment Variables** — a missing pair is what makes the login button hang,
+so double-check them — and set Supabase **Auth → URL Configuration** Site URL
+to your deployed domain. Optionally enable `pg_cron` in Supabase and schedule
+`select public.close_stale_shifts();` nightly — the app also does this lazily
+on page loads, so cron is belt-and-suspenders.

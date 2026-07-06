@@ -94,7 +94,7 @@ export default async function OfficerChoresPage({
   const next = addMonths(month, 1).slice(0, 7);
 
   return (
-    <main>
+    <main className="anim-fade">
       <h1 className="text-2xl font-bold tracking-tight">Chores</h1>
       <p className="mt-1 text-muted">
         Assignments, the chore catalog, and the monthly reshuffle.
@@ -103,9 +103,10 @@ export default async function OfficerChoresPage({
       <nav className="mt-5 flex items-center gap-3">
         <Link
           href={`/officer/chores?month=${prev}`}
-          className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-muted transition active:scale-[0.97]"
+          aria-label={`Show ${monthLabel(`${prev}-01`)}`}
+          className="rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-muted transition active:scale-[0.97]"
         >
-          ← {monthLabel(`${prev}-01`)}
+          ←
         </Link>
         <span className="flex-1 text-center text-sm font-semibold">
           {monthLabel(month)}
@@ -117,9 +118,10 @@ export default async function OfficerChoresPage({
         </span>
         <Link
           href={`/officer/chores?month=${next}`}
-          className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-muted transition active:scale-[0.97]"
+          aria-label={`Show ${monthLabel(`${next}-01`)}`}
+          className="rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-muted transition active:scale-[0.97]"
         >
-          {monthLabel(`${next}-01`)} →
+          →
         </Link>
       </nav>
 

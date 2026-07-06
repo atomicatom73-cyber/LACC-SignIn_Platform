@@ -40,7 +40,7 @@ export function ChoreBoard({
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className="anim-stagger grid gap-4 sm:grid-cols-2">
       {chores.map((chore) => (
         <ChoreCard key={chore.id} month={month} chore={chore} members={members} />
       ))}

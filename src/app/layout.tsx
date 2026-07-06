@@ -29,6 +29,9 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  // Draw edge-to-edge on phones; safe-area padding in globals.css keeps
+  // content clear of notches and home indicators.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -41,7 +44,10 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      {/* Plain block, not a flex column: a viewport-height flex body squashes
+          page shells whose min-h-dvh overrides their automatic minimum size
+          (clipped navs, broken sticky). Pages manage their own height. */}
+      <body className="min-h-full">{children}</body>
     </html>
   );
 }

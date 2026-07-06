@@ -1,4 +1,4 @@
-/** Roles and permissions shared by the whole app. */
+﻿/** Roles and permissions shared by the whole app. */
 
 export type Role = "member" | "president" | "vice_president" | "volunteer_coordinator";
 
@@ -31,10 +31,27 @@ export function isOfficer(role: string | null | undefined): boolean {
   return (OFFICER_ROLES as readonly string[]).includes(role ?? "");
 }
 
-/** Only the president can change anyone's role (the VP explicitly cannot). */
-export function canManageRoles(role: string | null | undefined): boolean {
-  return role === "president";
+/**
+ * Login identifier for a member who signs in by name. Mirrors the officer
+ * accounts: Supabase needs an email-shaped string, nobody reads the inbox.
+ * "Jose O'Brien" -> jose.o.brien@member.lacc.local
+ */
+export function memberLoginEmail(fullName: string): string | null {
+  const slug = fullName
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "") // strip accents
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "");
+  return slug ? `${slug}@member.lacc.local` : null;
 }
+
+/**
+ * Roles are permanently fixed: the three officer roles exist only as the
+ * shared accounts above, and everyone else is a member. There is no
+ * role-change UI, no server action, and the DB trigger rejects role updates
+ * from any client session.
+ */
 
 /** Add/deactivate members, edit member details. */
 export function canManageMembers(role: string | null | undefined): boolean {

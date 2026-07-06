@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
-import { ROLE_LABELS, type Role } from "@/lib/roles";
 import { monthLabel } from "@/lib/studio";
 
 /** Result shape shared by the useActionState forms on this page. */
@@ -122,35 +121,6 @@ export async function setActive(
   const { error } = await supabase
     .from("members")
     .update({ active })
-    .eq("id", memberId);
-  if (error) return { error: error.message };
-
-  revalidatePath("/officer/members");
-  return null;
-}
-
-/** Change a member's role (president only; DB trigger backs this up). */
-export async function setRole(
-  memberId: string,
-  role: Role,
-): Promise<{ error: string } | null> {
-  const { supabase, member } = await requireOfficer();
-  if (member.role !== "president") {
-    return { error: "Only the president can change roles." };
-  }
-
-  if (!memberId) return { error: "Missing member." };
-  if (!(role in ROLE_LABELS)) return { error: "Unknown role." };
-  if (memberId === member.id && role !== "president") {
-    return {
-      error:
-        "You are logged into this account — promote another account to president first.",
-    };
-  }
-
-  const { error } = await supabase
-    .from("members")
-    .update({ role })
     .eq("id", memberId);
   if (error) return { error: error.message };
 

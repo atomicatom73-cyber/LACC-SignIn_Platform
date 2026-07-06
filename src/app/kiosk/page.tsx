@@ -41,7 +41,7 @@ export default async function KioskPage() {
   const inCount = roster.filter((m) => m.openSince !== null).length;
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-4xl flex-col px-5 py-6">
+    <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-4xl flex-col px-5 py-6">
       <header className="flex items-center justify-between">
         <Wordmark />
         <div className="flex items-center gap-4">

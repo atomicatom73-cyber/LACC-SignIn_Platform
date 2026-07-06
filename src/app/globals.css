@@ -28,8 +28,7 @@
   --font-mono: var(--font-geist-mono);
 }
 
-html,
-body {
+html {
   height: 100%;
 }
 
@@ -38,6 +37,67 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
+  /* Keep content clear of notches, punch-holes, and home indicators when
+     installed to a home screen (viewport-fit=cover). Zero in a plain tab. */
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
+/* Page-entry animation: subtle rise + fade. Applied per-page via .anim-fade,
+   or to each child of a list via .anim-stagger for a gentle cascade. */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .anim-fade {
+    animation: fade-up 0.35s ease-out both;
+  }
+  .anim-stagger > * {
+    animation: fade-up 0.35s ease-out both;
+  }
+  .anim-stagger > *:nth-child(2) {
+    animation-delay: 0.04s;
+  }
+  .anim-stagger > *:nth-child(3) {
+    animation-delay: 0.08s;
+  }
+  .anim-stagger > *:nth-child(4) {
+    animation-delay: 0.12s;
+  }
+  .anim-stagger > *:nth-child(5) {
+    animation-delay: 0.16s;
+  }
+  .anim-stagger > *:nth-child(n + 6) {
+    animation-delay: 0.2s;
+  }
+}
+
+/* Loading skeleton blocks used by the route-level loading screens. */
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.skeleton {
+  border-radius: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
 }
 
 /* Comfortable touch targets everywhere by default. */
