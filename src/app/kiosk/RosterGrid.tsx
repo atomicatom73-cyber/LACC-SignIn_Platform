@@ -14,6 +14,11 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  const visible = members.filter((m) =>
+    m.full_name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
 
   function handleTap(member: RosterMember) {
     setBusyId(member.id);
@@ -50,16 +55,31 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {members.map((m) => (
-          <RosterCard
-            key={m.id}
-            member={m}
-            busy={pending && busyId === m.id}
-            onTap={() => handleTap(m)}
-          />
-        ))}
-      </div>
+      <input
+        type="search"
+        inputMode="search"
+        placeholder="Type your name…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        className="mb-4 w-full rounded-2xl border border-border bg-surface px-5 py-3 text-lg outline-none focus:border-accent"
+      />
+
+      {visible.length === 0 ? (
+        <p className="mt-8 text-center text-muted">
+          No one matches “{query}”. Ask an officer to add you to the roster.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {visible.map((m) => (
+            <RosterCard
+              key={m.id}
+              member={m}
+              busy={pending && busyId === m.id}
+              onTap={() => handleTap(m)}
+            />
+          ))}
+        </div>
+      )}
 
       <div
         role="status"

@@ -2,12 +2,11 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Refreshes the Supabase auth session and guards the personal dashboard.
- *
- * Scoped (via `config.matcher`) to `/me` — the only area that reads the
- * logged-in user's session — so we don't pay a Supabase `getUser()` round-trip
- * on the landing page, login, or kiosk. Server Actions posted to `/me` are
- * covered by the same matcher, and each one re-checks auth on its own.
+ * Refreshes the Supabase auth session and guards the logged-in areas
+ * (member dashboard, officer dashboard, studio calendar). The landing page,
+ * login, and kiosk stay session-free so they skip the `getUser()` round-trip.
+ * Server Actions posted to these routes are covered by the same matcher, and
+ * each one re-checks auth on its own.
  *
  * Next.js 16 renamed the `middleware` file convention to `proxy`.
  */
@@ -49,5 +48,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/me/:path*"],
+  matcher: ["/me/:path*", "/officer/:path*", "/calendar/:path*"],
 };

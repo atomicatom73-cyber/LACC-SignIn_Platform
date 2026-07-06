@@ -3,10 +3,10 @@ import type { MetadataRoute } from "next";
 /** Web app manifest — lets the kiosk iPad and phones install to the home screen. */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "LACC Sign-In",
+    name: "LACC Studio",
     short_name: "LACC",
     description:
-      "Studio member sign-in and shift tracking for the Los Angeles Creative Collective.",
+      "Los Alamos Community Ceramics — member sign-in, chores, studio calendar, and announcements.",
     start_url: "/",
     display: "standalone",
     orientation: "portrait",

@@ -1,0 +1,153 @@
+import Link from "next/link";
+import { requireOfficer } from "@/lib/auth";
+import { addMonths, monthKey, monthLabel } from "@/lib/studio";
+import type { Chore } from "@/lib/types";
+import { ChoreBoard, type BoardChore, type PickerMember } from "./ChoreBoard";
+import { CatalogManager } from "./CatalogManager";
+import { ReshuffleCard } from "./ReshuffleCard";
+
+export const dynamic = "force-dynamic";
+
+/** Raw row shape for the assignments + member-name join below. */
+type AssignmentRow = {
+  id: string;
+  chore_id: string;
+  member_id: string;
+  status: "pending" | "completed";
+  members: { full_name: string } | null;
+};
+
+export default async function OfficerChoresPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>;
+}) {
+  const { supabase } = await requireOfficer();
+
+  const { month: rawMonth } = await searchParams;
+  const currentMonth = monthKey();
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawMonth ?? "")
+    ? `${rawMonth}-01`
+    : currentMonth;
+
+  const [choresRes, assignmentsRes, membersRes, absencesRes] =
+    await Promise.all([
+      supabase
+        .from("chores")
+        .select("id, name, description, slots, active, created_at")
+        .order("name", { ascending: true }),
+      supabase
+        .from("chore_assignments")
+        .select("id, chore_id, member_id, status, members(full_name)")
+        .eq("month", month)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("members")
+        .select("id, full_name")
+        .eq("role", "member")
+        .eq("active", true)
+        .order("full_name", { ascending: true }),
+      supabase
+        .from("absences")
+        .select("member_id, members(full_name)")
+        .eq("month", month),
+    ]);
+
+  const chores = (choresRes.data ?? []) as Chore[];
+  const assignments = (assignmentsRes.data ?? []) as unknown as AssignmentRow[];
+  const members = (membersRes.data ?? []) as PickerMember[];
+  const absences = (absencesRes.data ?? []) as unknown as {
+    member_id: string;
+    members: { full_name: string } | null;
+  }[];
+
+  const assigneesByChore = new Map<string, BoardChore["assignees"]>();
+  for (const a of assignments) {
+    const list = assigneesByChore.get(a.chore_id) ?? [];
+    list.push({
+      assignmentId: a.id,
+      memberId: a.member_id,
+      memberName: a.members?.full_name ?? "Unknown member",
+      status: a.status,
+    });
+    assigneesByChore.set(a.chore_id, list);
+  }
+
+  // The board shows every active chore plus any retired one that still has
+  // assignments this month (so history months render completely).
+  const boardChores: BoardChore[] = chores
+    .filter((c) => c.active || assigneesByChore.has(c.id))
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      description: c.description,
+      slots: c.slots,
+      active: c.active,
+      assignees: assigneesByChore.get(c.id) ?? [],
+    }));
+
+  const absentNames = absences
+    .map((a) => a.members?.full_name ?? "Unknown member")
+    .sort((a, b) => a.localeCompare(b));
+
+  const prev = addMonths(month, -1).slice(0, 7);
+  const next = addMonths(month, 1).slice(0, 7);
+
+  return (
+    <main>
+      <h1 className="text-2xl font-bold tracking-tight">Chores</h1>
+      <p className="mt-1 text-muted">
+        Assignments, the chore catalog, and the monthly reshuffle.
+      </p>
+
+      <nav className="mt-5 flex items-center gap-3">
+        <Link
+          href={`/officer/chores?month=${prev}`}
+          className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-muted transition active:scale-[0.97]"
+        >
+          ← {monthLabel(`${prev}-01`)}
+        </Link>
+        <span className="flex-1 text-center text-sm font-semibold">
+          {monthLabel(month)}
+          {month === currentMonth && (
+            <span className="ml-2 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+              now
+            </span>
+          )}
+        </span>
+        <Link
+          href={`/officer/chores?month=${next}`}
+          className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-muted transition active:scale-[0.97]"
+        >
+          {monthLabel(`${next}-01`)} →
+        </Link>
+      </nav>
+
+      {month >= currentMonth && (
+        <div className="mt-5">
+          <ReshuffleCard key={month} month={month} />
+        </div>
+      )}
+
+      {absentNames.length > 0 && (
+        <p className="mt-5 text-sm text-muted">
+          <span className="font-medium text-foreground">
+            Absent {monthLabel(month)}:
+          </span>{" "}
+          {absentNames.join(", ")}
+        </p>
+      )}
+
+      <section className="mt-5">
+        <ChoreBoard month={month} chores={boardChores} members={members} />
+      </section>
+
+      <section className="mt-10">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
+          Chore catalog
+        </h2>
+        <CatalogManager chores={chores} />
+      </section>
+    </main>
+  );
+}

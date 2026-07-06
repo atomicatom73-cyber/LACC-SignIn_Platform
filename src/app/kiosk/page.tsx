@@ -13,10 +13,14 @@ export default async function KioskPage() {
 
   const supabase = createAdminClient();
 
+  // Anyone who forgot to sign out stays signed in until end of that day.
+  await supabase.rpc("close_stale_shifts");
+
   const { data: members } = await supabase
     .from("members")
     .select("id, full_name")
     .eq("active", true)
+    .eq("role", "member") // shared officer logins aren't people in the studio
     .order("full_name");
 
   const { data: openShifts } = await supabase
@@ -52,8 +56,10 @@ export default async function KioskPage() {
       </header>
 
       <div className="mt-6">
-        <h1 className="text-2xl font-bold tracking-tight">Who&apos;s here?</h1>
-        <p className="mt-1 text-muted">Tap your name to sign in or out.</p>
+        <h1 className="text-2xl font-bold tracking-tight">Quick sign in</h1>
+        <p className="mt-1 text-muted">
+          Find your name and tap it to sign in or out.
+        </p>
       </div>
 
       <div className="mt-6 flex-1">

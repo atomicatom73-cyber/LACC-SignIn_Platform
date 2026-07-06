@@ -7,9 +7,9 @@ export default function Home() {
       <div className="w-full max-w-sm">
         <div className="mb-10 flex flex-col items-center text-center">
           <Logo className="mb-5 h-16 w-16 text-2xl" />
-          <h1 className="text-3xl font-bold tracking-tight">LACC Sign-In</h1>
+          <h1 className="text-3xl font-bold tracking-tight">LACC Studio</h1>
           <p className="mt-2 text-muted">
-            Clock in when you arrive, clock out when you leave.
+            Sign in, see your chores, and keep up with the studio.
           </p>
         </div>
 
@@ -19,9 +19,9 @@ export default function Home() {
             className="flex items-center justify-between rounded-2xl bg-accent px-6 py-5 text-background transition active:scale-[0.98]"
           >
             <span>
-              <span className="block text-lg font-semibold">On my phone</span>
+              <span className="block text-lg font-semibold">My account</span>
               <span className="block text-sm text-background/70">
-                Log in with your email
+                Chores, calendar &amp; announcements
               </span>
             </span>
             <span className="text-2xl">→</span>
@@ -32,9 +32,9 @@ export default function Home() {
             className="flex items-center justify-between rounded-2xl border border-border bg-surface px-6 py-5 transition active:scale-[0.98]"
           >
             <span>
-              <span className="block text-lg font-semibold">Studio iPad</span>
+              <span className="block text-lg font-semibold">Quick sign in</span>
               <span className="block text-sm text-muted">
-                Tap your name on the roster
+                Tap your name on the studio list
               </span>
             </span>
             <span className="text-2xl text-muted">→</span>
@@ -42,7 +42,7 @@ export default function Home() {
         </div>
 
         <p className="mt-10 text-center text-xs text-muted">
-          Los Angeles Creative Collective
+          Los Alamos Community Ceramics
         </p>
       </div>
     </main>

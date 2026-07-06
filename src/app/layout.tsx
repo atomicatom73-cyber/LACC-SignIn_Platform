@@ -13,12 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LACC Sign-In",
-  description: "Studio member sign-in and shift tracking",
-  applicationName: "LACC Sign-In",
+  title: "LACC Studio",
+  description:
+    "Los Alamos Community Ceramics — member sign-in, chores, calendar, and announcements",
+  applicationName: "LACC Studio",
   appleWebApp: {
     capable: true,
-    title: "LACC Sign-In",
+    title: "LACC Studio",
     statusBarStyle: "default",
   },
 };

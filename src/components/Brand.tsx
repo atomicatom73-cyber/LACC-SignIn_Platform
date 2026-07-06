@@ -14,8 +14,8 @@ export function Wordmark() {
     <div className="flex items-center gap-3">
       <Logo className="h-10 w-10 text-lg" />
       <div className="leading-tight">
-        <div className="text-base font-semibold">LACC Sign-In</div>
-        <div className="text-xs text-muted">Studio attendance</div>
+        <div className="text-base font-semibold">LACC Studio</div>
+        <div className="text-xs text-muted">Los Alamos Community Ceramics</div>
       </div>
     </div>
   );

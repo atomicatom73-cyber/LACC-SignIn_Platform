@@ -1,0 +1,184 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { requireOfficer } from "@/lib/auth";
+import { ROLE_LABELS, type Role } from "@/lib/roles";
+import { monthLabel } from "@/lib/studio";
+
+/** Result shape shared by the useActionState forms on this page. */
+export type FormState = { error?: string; success?: string } | null;
+
+/** Grant one chore credit to a member (any officer). */
+export async function grantCredit(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const { supabase, member } = await requireOfficer();
+
+  const memberId = String(formData.get("member_id") ?? "").trim();
+  if (!memberId) return { error: "Missing member." };
+  const note = String(formData.get("note") ?? "").trim();
+
+  const { error } = await supabase.from("chore_credits").insert({
+    member_id: memberId,
+    note: note || null,
+    granted_by: member.id,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return { success: "Credit granted." };
+}
+
+/** Delete an unspent credit. Spent credits are history and stay put. */
+export async function revokeCredit(
+  creditId: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer();
+
+  if (!creditId) return { error: "Missing credit." };
+
+  const { data: credit, error: fetchError } = await supabase
+    .from("chore_credits")
+    .select("id, used_month")
+    .eq("id", creditId)
+    .maybeSingle();
+  if (fetchError) return { error: fetchError.message };
+  if (!credit) return { error: "Credit not found." };
+  if (credit.used_month !== null) {
+    return { error: "That credit was already spent — it can't be revoked." };
+  }
+
+  const { error } = await supabase
+    .from("chore_credits")
+    .delete()
+    .eq("id", creditId)
+    .is("used_month", null);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return null;
+}
+
+/** Mark a member absent for a month ("YYYY-MM" from a month input). */
+export async function markAbsence(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const { supabase, member } = await requireOfficer();
+
+  const memberId = String(formData.get("member_id") ?? "").trim();
+  if (!memberId) return { error: "Missing member." };
+
+  const ym = String(formData.get("month") ?? "").trim();
+  if (!/^\d{4}-\d{2}$/.test(ym)) return { error: "Pick a month." };
+  const month = `${ym}-01`;
+  const note = String(formData.get("note") ?? "").trim();
+
+  const { error } = await supabase.from("absences").insert({
+    member_id: memberId,
+    month,
+    note: note || null,
+    marked_by: member.id,
+  });
+  if (error) {
+    if (error.code === "23505") {
+      return { error: `Already marked absent for ${monthLabel(month)}.` };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/officer/members");
+  return { success: `Marked absent for ${monthLabel(month)}.` };
+}
+
+/** Remove an absence row (any officer). */
+export async function removeAbsence(
+  absenceId: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer();
+
+  if (!absenceId) return { error: "Missing absence." };
+
+  const { error } = await supabase
+    .from("absences")
+    .delete()
+    .eq("id", absenceId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return null;
+}
+
+/** Activate/deactivate a member (president + VP). History is kept. */
+export async function setActive(
+  memberId: string,
+  active: boolean,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer(["president", "vice_president"]);
+
+  if (!memberId) return { error: "Missing member." };
+
+  const { error } = await supabase
+    .from("members")
+    .update({ active })
+    .eq("id", memberId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return null;
+}
+
+/** Change a member's role (president only; DB trigger backs this up). */
+export async function setRole(
+  memberId: string,
+  role: Role,
+): Promise<{ error: string } | null> {
+  const { supabase, member } = await requireOfficer();
+  if (member.role !== "president") {
+    return { error: "Only the president can change roles." };
+  }
+
+  if (!memberId) return { error: "Missing member." };
+  if (!(role in ROLE_LABELS)) return { error: "Unknown role." };
+  if (memberId === member.id && role !== "president") {
+    return {
+      error:
+        "You are logged into this account — promote another account to president first.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("members")
+    .update({ role })
+    .eq("id", memberId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return null;
+}
+
+/** Add a kiosk-only member (president + VP). They can claim it later. */
+export async function addMember(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const { supabase } = await requireOfficer(["president", "vice_president"]);
+
+  const fullName = String(formData.get("full_name") ?? "").trim();
+  if (!fullName) return { error: "Enter the member's full name." };
+
+  const pin = String(formData.get("pin") ?? "").trim();
+  if (pin && !/^\d{4}$/.test(pin)) {
+    return { error: "PIN must be exactly 4 digits (or leave it blank)." };
+  }
+
+  const { error } = await supabase.from("members").insert({
+    full_name: fullName,
+    pin: pin || null,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return { success: `${fullName} added to the roster.` };
+}
