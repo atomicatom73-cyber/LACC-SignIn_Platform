@@ -38,7 +38,11 @@ export default async function OfficerChoresPage({
         .order("name", { ascending: true }),
       supabase
         .from("chore_assignments")
-        .select("id, chore_id, member_id, status, members(full_name)")
+        // members!…: both member_id and assigned_by reference members, so the
+        // embed must name its FK or PostgREST rejects it as ambiguous.
+        .select(
+          "id, chore_id, member_id, status, members!chore_assignments_member_id_fkey(full_name)",
+        )
         .eq("month", month)
         .order("created_at", { ascending: true }),
       supabase
@@ -49,7 +53,7 @@ export default async function OfficerChoresPage({
         .order("full_name", { ascending: true }),
       supabase
         .from("absences")
-        .select("member_id, members(full_name)")
+        .select("member_id, members!absences_member_id_fkey(full_name)")
         .eq("month", month),
     ]);
 

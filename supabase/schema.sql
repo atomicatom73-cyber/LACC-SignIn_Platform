@@ -50,8 +50,9 @@ create unique index if not exists shifts_one_open_per_member
 create index if not exists shifts_member_idx on public.shifts (member_id);
 create index if not exists shifts_signed_in_idx on public.shifts (signed_in_at);
 
--- Guests: a signed-in member brings a visitor; presence-only record (no
--- sign-out), reminded to pay at sign-in. Shows in the officer sign-in logs.
+-- Guests: a signed-in member brings a visitor, reminded to pay at sign-in.
+-- Shows in the officer sign-in logs. Guests are signed out automatically when
+-- their host signs out (or by close_stale_shifts at end of day).
 create table if not exists public.guest_signins (
   id             uuid primary key default gen_random_uuid(),
   host_member_id uuid not null references public.members (id) on delete cascade,
@@ -59,17 +60,30 @@ create table if not exists public.guest_signins (
   signed_in_at   timestamptz not null default now()
 );
 
+alter table public.guest_signins
+  add column if not exists signed_out_at timestamptz;
+
 create index if not exists guest_signins_time_idx
   on public.guest_signins (signed_in_at);
 
--- Students: class attendees sign in with their name + class label (e.g.
--- "wednesday night class"); presence-only record for the sign-in logs.
+-- Students: attendees sign in with their name + class label (e.g. "wednesday
+-- night class"). Class rows are presence-only; open-studio visitors
+-- (session_type = 'open_studio') sign themselves out from the kiosk.
 create table if not exists public.student_signins (
   id           uuid primary key default gen_random_uuid(),
   student_name text not null,
   class_label  text not null,
   signed_in_at timestamptz not null default now()
 );
+
+alter table public.student_signins
+  add column if not exists session_type text not null default 'class';
+alter table public.student_signins
+  add column if not exists signed_out_at timestamptz;
+
+alter table public.student_signins drop constraint if exists student_signins_session_type_check;
+alter table public.student_signins add constraint student_signins_session_type_check
+  check (session_type in ('class', 'open_studio'));
 
 create index if not exists student_signins_time_idx
   on public.student_signins (signed_in_at);
@@ -307,8 +321,9 @@ create trigger chore_assignments_protect
   for each row execute function public.protect_assignment_update();
 
 -- ---------------------------------------------------------------------------
--- Forgotten sign-outs: close open shifts from previous studio days at
--- 23:59:59 local (America/Denver) time of the day they signed in.
+-- Forgotten sign-outs: close open member shifts, guest visits, and open-studio
+-- student visits from previous studio days at 23:59:59 local (America/Denver)
+-- time of the day they signed in.
 -- Called opportunistically from the app; optionally schedule with pg_cron.
 -- ---------------------------------------------------------------------------
 
@@ -322,6 +337,24 @@ as $$
            (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
              at time zone 'America/Denver') - interval '1 second'
    where signed_out_at is null
+     and (signed_in_at at time zone 'America/Denver')::date
+         < (now() at time zone 'America/Denver')::date;
+
+  update public.guest_signins
+     set signed_out_at =
+           (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
+             at time zone 'America/Denver') - interval '1 second'
+   where signed_out_at is null
+     and (signed_in_at at time zone 'America/Denver')::date
+         < (now() at time zone 'America/Denver')::date;
+
+  -- Class students are presence-only; only open-studio visits get an out time.
+  update public.student_signins
+     set signed_out_at =
+           (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
+             at time zone 'America/Denver') - interval '1 second'
+   where signed_out_at is null
+     and session_type = 'open_studio'
      and (signed_in_at at time zone 'America/Denver')::date
          < (now() at time zone 'America/Denver')::date;
 $$;

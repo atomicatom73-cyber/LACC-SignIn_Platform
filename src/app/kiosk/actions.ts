@@ -27,16 +27,25 @@ export async function toggleKioskShift(
 
   const { data: openShift } = await supabase
     .from("shifts")
-    .select("id")
+    .select("id, signed_in_at")
     .eq("member_id", memberId)
     .is("signed_out_at", null)
     .maybeSingle();
 
   if (openShift) {
+    const now = new Date().toISOString();
     await supabase
       .from("shifts")
-      .update({ signed_out_at: new Date().toISOString() })
+      .update({ signed_out_at: now })
       .eq("id", openShift.id);
+    // Guests come in with their host, so they leave with them too — close any
+    // guest rows from this shift so the logs show an out time.
+    await supabase
+      .from("guest_signins")
+      .update({ signed_out_at: now })
+      .eq("host_member_id", memberId)
+      .is("signed_out_at", null)
+      .gte("signed_in_at", openShift.signed_in_at);
     revalidatePath("/kiosk");
     return { nowIn: false, name: member.full_name };
   }
@@ -87,13 +96,24 @@ export async function kioskGuestSignIn(
   return { success: true, name: guestName };
 }
 
-/** Sign a class student in by name + class label (e.g. "wednesday night class"). */
+export type StudentFormState =
+  | { error: string }
+  | { success: true; name: string; openStudio: boolean }
+  | null;
+
+/**
+ * Sign a student in — either for a class (name + class label, presence-only)
+ * or for open studio time (name only; they sign out from the kiosk later).
+ */
 export async function studentSignIn(
-  _prev: SignInFormState,
+  _prev: StudentFormState,
   formData: FormData,
-): Promise<SignInFormState> {
+): Promise<StudentFormState> {
+  const openStudio = formData.get("session_type") === "open_studio";
   const studentName = String(formData.get("student_name") ?? "").trim();
-  const classLabel = String(formData.get("class_label") ?? "").trim();
+  const classLabel = openStudio
+    ? "Open studio"
+    : String(formData.get("class_label") ?? "").trim();
   if (!studentName) return { error: "Enter your name." };
   if (!classLabel) return { error: "Enter which class you're here for." };
   if (studentName.length > 80 || classLabel.length > 80) {
@@ -101,10 +121,35 @@ export async function studentSignIn(
   }
 
   const supabase = createAdminClient();
-  const { error } = await supabase
-    .from("student_signins")
-    .insert({ student_name: studentName, class_label: classLabel });
+  const { error } = await supabase.from("student_signins").insert({
+    student_name: studentName,
+    class_label: classLabel,
+    session_type: openStudio ? "open_studio" : "class",
+  });
   if (error) return { error: error.message };
 
-  return { success: true, name: studentName };
+  revalidatePath("/kiosk/student");
+  return { success: true, name: studentName, openStudio };
+}
+
+/** Sign an open-studio student out from the kiosk. */
+export async function studentSignOut(
+  signinId: string,
+): Promise<{ name: string } | { error: string }> {
+  if (!signinId) return { error: "Missing sign-in." };
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("student_signins")
+    .update({ signed_out_at: new Date().toISOString() })
+    .eq("id", signinId)
+    .eq("session_type", "open_studio")
+    .is("signed_out_at", null)
+    .select("student_name")
+    .maybeSingle();
+  if (error) return { error: error.message };
+  if (!data) return { error: "Already signed out — you're all set." };
+
+  revalidatePath("/kiosk/student");
+  return { name: data.student_name };
 }

@@ -22,16 +22,25 @@ export async function toggleShift() {
 
   const { data: openShift } = await supabase
     .from("shifts")
-    .select("id")
+    .select("id, signed_in_at")
     .eq("member_id", member.id)
     .is("signed_out_at", null)
     .maybeSingle();
 
   if (openShift) {
+    const now = new Date().toISOString();
     await supabase
       .from("shifts")
-      .update({ signed_out_at: new Date().toISOString() })
+      .update({ signed_out_at: now })
       .eq("id", openShift.id);
+    // Guests leave with their host. Service role: members can't update
+    // guest_signins rows under RLS.
+    await createAdminClient()
+      .from("guest_signins")
+      .update({ signed_out_at: now })
+      .eq("host_member_id", member.id)
+      .is("signed_out_at", null)
+      .gte("signed_in_at", openShift.signed_in_at);
   } else {
     await supabase
       .from("shifts")

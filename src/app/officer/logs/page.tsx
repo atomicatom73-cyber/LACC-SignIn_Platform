@@ -29,13 +29,16 @@ type GuestRow = {
   id: string;
   guest_name: string;
   signed_in_at: string;
+  signed_out_at: string | null;
   members: { full_name: string } | null;
 };
 type StudentRow = {
   id: string;
   student_name: string;
   class_label: string;
+  session_type: "class" | "open_studio";
   signed_in_at: string;
+  signed_out_at: string | null;
 };
 
 /** Who was in the studio, day by day. President + vice president only. */
@@ -74,12 +77,14 @@ export default async function SignInLogsPage({
       .order("signed_in_at", { ascending: true }),
     supabase
       .from("guest_signins")
-      .select("id, guest_name, signed_in_at, members(full_name)")
+      .select("id, guest_name, signed_in_at, signed_out_at, members(full_name)")
       .gte("signed_in_at", startUtc)
       .lt("signed_in_at", endUtc),
     supabase
       .from("student_signins")
-      .select("id, student_name, class_label, signed_in_at")
+      .select(
+        "id, student_name, class_label, session_type, signed_in_at, signed_out_at",
+      )
       .gte("signed_in_at", startUtc)
       .lt("signed_in_at", endUtc),
   ]);
@@ -111,7 +116,9 @@ export default async function SignInLogsPage({
       at: g.signed_in_at,
       kind: "guest",
       title: `${g.guest_name} (guest of ${g.members?.full_name ?? "unknown"})`,
-      detail: formatStudioClock(g.signed_in_at),
+      detail: `${formatStudioClock(g.signed_in_at)} – ${
+        g.signed_out_at ? formatStudioClock(g.signed_out_at) : "still in"
+      }`,
     });
   }
   for (const s of students) {
@@ -119,7 +126,13 @@ export default async function SignInLogsPage({
       at: s.signed_in_at,
       kind: "student",
       title: `${s.student_name} — ${s.class_label}`,
-      detail: formatStudioClock(s.signed_in_at),
+      // Class students are presence-only; open-studio visits get an out time.
+      detail:
+        s.session_type === "open_studio"
+          ? `${formatStudioClock(s.signed_in_at)} – ${
+              s.signed_out_at ? formatStudioClock(s.signed_out_at) : "still in"
+            }`
+          : formatStudioClock(s.signed_in_at),
     });
   }
 

@@ -29,7 +29,11 @@ export default async function PrintAssignmentsPage({
 
   const { data } = await supabase
     .from("chore_assignments")
-    .select("status, chores(id, name, description), members(full_name)")
+    // members!…: member_id and assigned_by both reference members; the embed
+    // must name its FK or PostgREST rejects it as ambiguous.
+    .select(
+      "status, chores(id, name, description), members!chore_assignments_member_id_fkey(full_name)",
+    )
     .eq("month", month);
 
   const rows = (data ?? []) as unknown as AssignmentRow[];
