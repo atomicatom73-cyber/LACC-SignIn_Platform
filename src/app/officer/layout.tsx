@@ -13,7 +13,7 @@ export default async function OfficerLayout({
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-5 py-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Wordmark />
         <div className="flex items-center gap-3">
           <span className="rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent">
@@ -25,7 +25,7 @@ export default async function OfficerLayout({
         </div>
       </header>
 
-      <OfficerNav />
+      <OfficerNav role={member.role} />
 
       <div className="mt-6 flex-1">{children}</div>
     </div>

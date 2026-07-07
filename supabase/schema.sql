@@ -48,6 +48,31 @@ create unique index if not exists shifts_one_open_per_member
   where signed_out_at is null;
 
 create index if not exists shifts_member_idx on public.shifts (member_id);
+create index if not exists shifts_signed_in_idx on public.shifts (signed_in_at);
+
+-- Guests: a signed-in member brings a visitor; presence-only record (no
+-- sign-out), reminded to pay at sign-in. Shows in the officer sign-in logs.
+create table if not exists public.guest_signins (
+  id             uuid primary key default gen_random_uuid(),
+  host_member_id uuid not null references public.members (id) on delete cascade,
+  guest_name     text not null,
+  signed_in_at   timestamptz not null default now()
+);
+
+create index if not exists guest_signins_time_idx
+  on public.guest_signins (signed_in_at);
+
+-- Students: class attendees sign in with their name + class label (e.g.
+-- "wednesday night class"); presence-only record for the sign-in logs.
+create table if not exists public.student_signins (
+  id           uuid primary key default gen_random_uuid(),
+  student_name text not null,
+  class_label  text not null,
+  signed_in_at timestamptz not null default now()
+);
+
+create index if not exists student_signins_time_idx
+  on public.student_signins (signed_in_at);
 
 -- ---------------------------------------------------------------------------
 -- Chores
@@ -132,6 +157,13 @@ create table if not exists public.events (
 );
 
 create index if not exists events_starts_idx on public.events (starts_at);
+
+-- Recurring events: the row is the first occurrence; the app expands
+-- occurrences (daily/weekly/monthly) when rendering the calendar grid.
+alter table public.events add column if not exists recurrence text not null default 'none';
+alter table public.events drop constraint if exists events_recurrence_check;
+alter table public.events add constraint events_recurrence_check
+  check (recurrence in ('none', 'daily', 'weekly', 'monthly'));
 
 -- ---------------------------------------------------------------------------
 -- Announcements / messages
@@ -307,6 +339,8 @@ grant execute on function public.close_stale_shifts() to authenticated;
 
 alter table public.members            enable row level security;
 alter table public.shifts             enable row level security;
+alter table public.guest_signins      enable row level security;
+alter table public.student_signins    enable row level security;
 alter table public.chores             enable row level security;
 alter table public.chore_assignments  enable row level security;
 alter table public.chore_credits      enable row level security;
@@ -353,6 +387,20 @@ create policy "shifts update own"
   on public.shifts for update
   using (member_id in (select id from public.members where user_id = auth.uid()))
   with check (member_id in (select id from public.members where user_id = auth.uid()));
+
+-- guest / student sign-ins ------------------------------------------------
+-- Written server-side with the service role (kiosk + member flows); officers
+-- read them in the sign-in logs.
+
+drop policy if exists "guest signins read officers" on public.guest_signins;
+create policy "guest signins read officers"
+  on public.guest_signins for select
+  using (public.is_officer());
+
+drop policy if exists "student signins read officers" on public.student_signins;
+create policy "student signins read officers"
+  on public.student_signins for select
+  using (public.is_officer());
 
 -- chores ----------------------------------------------------------------
 

@@ -40,6 +40,36 @@ export function isPastMonth(key: string, now: Date = new Date()): boolean {
   return key < monthKey(now);
 }
 
+/** Day key ("YYYY-MM-DD") for the studio-local day containing the instant. */
+export function studioDayKey(at: string | Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: STUDIO_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(typeof at === "string" ? new Date(at) : at);
+}
+
+/** "2026-07-14" → "Monday, July 14" (calendar date, timezone-free). */
+export function dayLabel(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+/** "…Z" → e.g. "6:01 PM" on the studio wall clock. */
+export function formatStudioClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: STUDIO_TZ,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 /** "2026-07-14T…Z" → e.g. "Jul 14" in studio time. */
 export function formatStudioDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", {

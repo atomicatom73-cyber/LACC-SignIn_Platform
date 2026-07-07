@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "LACC Studio",
     short_name: "LACC",
     description:
-      "Los Alamos Community Ceramics — member sign-in, chores, studio calendar, and announcements.",
+      "Los Alamos Community Ceramics — member sign-in, jobs, studio calendar, and announcements.",
     start_url: "/",
     display: "standalone",
     orientation: "portrait",

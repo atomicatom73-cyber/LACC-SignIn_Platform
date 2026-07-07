@@ -6,14 +6,16 @@ import { memberLoginEmail } from "@/lib/roles";
 export type RegisterResult = { error: string } | { email: string };
 
 /**
- * Create a member account from just a name + password. The synthetic
+ * Create a member account from a name + password + kiosk PIN. The synthetic
  * @member.lacc.local address is derived from the name (see memberLoginEmail);
  * the account is pre-confirmed so no verification email is ever involved.
- * The handle_new_user trigger creates the member row from the metadata name.
+ * The handle_new_user trigger creates the member row from the metadata name;
+ * the PIN is what they tap in with on the studio quick sign-in screen.
  */
 export async function registerMember(
   fullNameRaw: string,
   password: string,
+  pin: string,
 ): Promise<RegisterResult> {
   const fullName = fullNameRaw.trim().replace(/\s+/g, " ");
   if (fullName.length < 2) return { error: "Enter your full name." };
@@ -25,9 +27,12 @@ export async function registerMember(
   if (password.length < 8) {
     return { error: "Password needs at least 8 characters." };
   }
+  if (!/^\d{4}$/.test(pin)) {
+    return { error: "Pick a 4-digit PIN for the studio sign-in screen." };
+  }
 
   const supabase = createAdminClient();
-  const { error } = await supabase.auth.admin.createUser({
+  const { data: created, error } = await supabase.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
@@ -42,6 +47,17 @@ export async function registerMember(
       };
     }
     return { error: error.message };
+  }
+
+  // The handle_new_user trigger has already made the member row; stamp the
+  // kiosk PIN on it.
+  const { error: pinError } = await supabase
+    .from("members")
+    .update({ pin })
+    .eq("user_id", created.user.id);
+  if (pinError) {
+    // The account still works — the kiosk just won't ask for a PIN yet.
+    console.error("Failed to save kiosk PIN:", pinError.message);
   }
 
   return { email };

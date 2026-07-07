@@ -119,7 +119,7 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
         pool.splice(i, 1);
         i -= 1;
         warnings.push(
-          `${candidate.full_name} is sitting this month out on a chore credit.`,
+          `${candidate.full_name} is sitting this month out on a job credit.`,
         );
         continue;
       }
@@ -142,7 +142,7 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
           pick = takeCandidate(chore, memberIds, false);
           if (pick) {
             warnings.push(
-              `${pick.full_name} got a second chore (${chore.name}) — everyone available already has one.`,
+              `${pick.full_name} got a second job (${chore.name}) — everyone available already has one.`,
             );
           }
         }

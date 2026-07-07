@@ -60,7 +60,7 @@ export function EventForm({
             name="title"
             required
             defaultValue={event?.title ?? ""}
-            placeholder="Raku firing night"
+            placeholder="“Raku firing night”"
             className={inputClass}
           />
         </Field>
@@ -109,12 +109,25 @@ export function EventForm({
           </Field>
         </div>
 
+        <Field label="Repeats">
+          <select
+            name="recurrence"
+            defaultValue={event?.recurrence ?? "none"}
+            className={inputClass}
+          >
+            <option value="none">Doesn&apos;t repeat</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </Field>
+
         <Field label="Location (optional)">
           <input
             type="text"
             name="location"
             defaultValue={event?.location ?? ""}
-            placeholder="Main studio"
+            placeholder="“Main studio”"
             className={inputClass}
           />
         </Field>

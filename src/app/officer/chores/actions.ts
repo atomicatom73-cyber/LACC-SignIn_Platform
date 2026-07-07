@@ -1,4 +1,4 @@
-"use server";
+﻿"use server";
 
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
@@ -18,7 +18,7 @@ function parseSlots(raw: FormDataEntryValue | null): number | { error: string } 
   return slots;
 }
 
-/** Add a chore to the catalog (any officer). */
+/** Add a job to the catalog (any officer). */
 export async function createChore(
   _prev: FormState,
   formData: FormData,
@@ -26,7 +26,7 @@ export async function createChore(
   const { supabase } = await requireOfficer();
 
   const name = String(formData.get("name") ?? "").trim();
-  if (!name) return { error: "Give the chore a name." };
+  if (!name) return { error: "Give the job a name." };
   const description = String(formData.get("description") ?? "").trim();
   const slots = parseSlots(formData.get("slots"));
   if (typeof slots !== "number") return slots;
@@ -38,7 +38,7 @@ export async function createChore(
   });
   if (error) {
     if (error.code === "23505") {
-      return { error: `There's already a chore called “${name}”.` };
+      return { error: `There's already a job called “${name}”.` };
     }
     return { error: error.message };
   }
@@ -47,7 +47,7 @@ export async function createChore(
   return { success: `“${name}” added to the catalog.` };
 }
 
-/** Edit a catalog chore's name, description, or slots (any officer). */
+/** Edit a catalog job's name, description, or slots (any officer). */
 export async function updateChore(
   _prev: FormState,
   formData: FormData,
@@ -55,9 +55,9 @@ export async function updateChore(
   const { supabase } = await requireOfficer();
 
   const choreId = String(formData.get("chore_id") ?? "").trim();
-  if (!choreId) return { error: "Missing chore." };
+  if (!choreId) return { error: "Missing job." };
   const name = String(formData.get("name") ?? "").trim();
-  if (!name) return { error: "Give the chore a name." };
+  if (!name) return { error: "Give the job a name." };
   const description = String(formData.get("description") ?? "").trim();
   const slots = parseSlots(formData.get("slots"));
   if (typeof slots !== "number") return slots;
@@ -68,38 +68,33 @@ export async function updateChore(
     .eq("id", choreId);
   if (error) {
     if (error.code === "23505") {
-      return { error: `There's already a chore called “${name}”.` };
+      return { error: `There's already a job called “${name}”.` };
     }
     return { error: error.message };
   }
 
   revalidatePath("/officer/chores");
-  return { success: "Chore updated." };
+  revalidatePath("/officer/members");
+  return { success: "Job updated." };
 }
 
-/**
- * Activate/deactivate a catalog chore. Deactivated chores keep their history
- * and drop out of future reshuffles — that's how one-off chores retire.
- */
-export async function setChoreActive(
+/** Delete a catalog job. Its assignment history goes with it. */
+export async function deleteChore(
   choreId: string,
-  active: boolean,
 ): Promise<{ error: string } | null> {
   const { supabase } = await requireOfficer();
 
-  if (!choreId) return { error: "Missing chore." };
+  if (!choreId) return { error: "Missing job." };
 
-  const { error } = await supabase
-    .from("chores")
-    .update({ active })
-    .eq("id", choreId);
+  const { error } = await supabase.from("chores").delete().eq("id", choreId);
   if (error) return { error: error.message };
 
   revalidatePath("/officer/chores");
+  revalidatePath("/officer/members");
   return null;
 }
 
-/** Manually assign a chore to a member for a month (any officer). */
+/** Manually assign a job to a member for a month (any officer). */
 export async function assignChore(
   _prev: FormState,
   formData: FormData,
@@ -120,12 +115,13 @@ export async function assignChore(
   });
   if (error) {
     if (error.code === "23505") {
-      return { error: "They already have this chore that month." };
+      return { error: "They already have this job that month." };
     }
     return { error: error.message };
   }
 
   revalidatePath("/officer/chores");
+  revalidatePath("/officer/members");
   return { success: "Assigned." };
 }
 
@@ -144,6 +140,7 @@ export async function removeAssignment(
   if (error) return { error: error.message };
 
   revalidatePath("/officer/chores");
+  revalidatePath("/officer/members");
   return null;
 }
 
@@ -166,6 +163,7 @@ export async function setAssignmentStatus(
   if (error) return { error: error.message };
 
   revalidatePath("/officer/chores");
+  revalidatePath("/officer/members");
   return null;
 }
 
@@ -231,10 +229,10 @@ export async function previewReshuffle(
   const chores = choresRes.data ?? [];
   const members = membersRes.data ?? [];
   if (chores.length === 0) {
-    return { error: "No active chores in the catalog — add some first." };
+    return { error: "No active jobs in the catalog — add some first." };
   }
   if (members.length === 0) {
-    return { error: "No active members to assign chores to." };
+    return { error: "No active members to assign jobs to." };
   }
 
   const draft = generateMonthlyDraft({
@@ -256,7 +254,7 @@ export async function previewReshuffle(
       targetMonth,
       proposals: draft.proposals.map((p) => ({
         choreId: p.chore_id,
-        choreName: choreName.get(p.chore_id) ?? "Unknown chore",
+        choreName: choreName.get(p.chore_id) ?? "Unknown job",
         members: p.member_ids.map((id) => ({
           id,
           name: nameOf.get(id) ?? "Unknown member",

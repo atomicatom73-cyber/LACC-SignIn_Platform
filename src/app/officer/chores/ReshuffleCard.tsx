@@ -92,7 +92,7 @@ export function ReshuffleCard({ month }: { month: string }) {
             <p className="mb-3 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-sm">
               {monthLabel(month)} already has {preview.existingCount} assignment
               {preview.existingCount === 1 ? "" : "s"} — the draft doesn&apos;t
-              know about them, so double-check for members getting two chores.
+              know about them, so double-check for members getting two jobs.
             </p>
           )}
 

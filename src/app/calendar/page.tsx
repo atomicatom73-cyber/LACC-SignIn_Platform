@@ -2,58 +2,71 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireMember } from "@/lib/auth";
 import { canManageCalendar, isOfficer } from "@/lib/roles";
-import { monthKey, monthLabel } from "@/lib/studio";
+import {
+  addMonths,
+  dayLabel,
+  monthKey,
+  studioDayKey,
+  studioToUtcIso,
+} from "@/lib/studio";
+import { occurrencesByDay } from "@/lib/events";
 import type { StudioEvent } from "@/lib/types";
 import { Wordmark } from "@/components/Brand";
+import { MonthGrid, type DayMarker } from "@/components/MonthGrid";
 import { AddEvent } from "./AddEvent";
 import { EventCard } from "./EventCard";
 
 export const dynamic = "force-dynamic";
 
-type MonthGroup = { key: string; label: string; events: StudioEvent[] };
-
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ past?: string }>;
+  searchParams: Promise<{ month?: string; day?: string }>;
 }) {
   const { supabase, member } = await requireMember();
   if (!member) redirect("/me"); // /me shows the profile-setup hint
 
-  const { past } = await searchParams;
-  const showPast = past === "1";
-  const nowIso = new Date().toISOString();
+  const { month: rawMonth, day: rawDay } = await searchParams;
+  const currentMonth = monthKey();
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawMonth ?? "")
+    ? `${rawMonth}-01`
+    : currentMonth;
+  const ym = month.slice(0, 7);
 
-  const query = supabase
+  const todayKey = studioDayKey();
+  const selectedDay =
+    /^\d{4}-\d{2}-\d{2}$/.test(rawDay ?? "") && rawDay!.startsWith(ym)
+      ? rawDay!
+      : month === currentMonth
+        ? todayKey
+        : `${ym}-01`;
+
+  // Events that can put an occurrence in this month: anything recurring that
+  // started before month end, plus one-offs starting inside the month.
+  const startUtc = studioToUtcIso(`${ym}-01`, "00:00");
+  const endUtc = studioToUtcIso(`${addMonths(month, 1).slice(0, 7)}-01`, "00:00");
+  const { data } = await supabase
     .from("events")
     .select(
-      "id, title, description, category, location, starts_at, ends_at, created_by, created_at",
-    );
-
-  // "Upcoming" means the event hasn't ended yet: ends_at ?? starts_at >= now.
-  const { data } = showPast
-    ? await query
-        .or(`and(ends_at.is.null,starts_at.lt.${nowIso}),ends_at.lt.${nowIso}`)
-        .order("starts_at", { ascending: false })
-        .limit(50)
-    : await query
-        .or(`starts_at.gte.${nowIso},ends_at.gte.${nowIso}`)
-        .order("starts_at", { ascending: true });
+      "id, title, description, category, location, starts_at, ends_at, recurrence, created_by, created_at",
+    )
+    .lt("starts_at", endUtc)
+    .or(`recurrence.neq.none,starts_at.gte.${startUtc}`)
+    .order("starts_at", { ascending: true });
 
   const events: StudioEvent[] = data ?? [];
   const canManage = canManageCalendar(member.role);
   const backHref = isOfficer(member.role) ? "/officer" : "/me";
 
-  // Group upcoming events by studio-local month (already sorted ascending).
-  const groups: MonthGroup[] = [];
-  if (!showPast) {
-    for (const event of events) {
-      const key = monthKey(new Date(event.starts_at));
-      const last = groups[groups.length - 1];
-      if (last && last.key === key) last.events.push(event);
-      else groups.push({ key, label: monthLabel(key), events: [event] });
-    }
+  const byDay = occurrencesByDay(events, month);
+  const markers: Record<string, DayMarker> = {};
+  for (const [key, list] of byDay) {
+    markers[key] = { dots: list.length };
   }
+  const dayOccurrences = byDay.get(selectedDay) ?? [];
+
+  const prev = addMonths(month, -1).slice(0, 7);
+  const next = addMonths(month, 1).slice(0, 7);
 
   return (
     <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-2xl flex-col px-5 py-6">
@@ -71,14 +84,16 @@ export default async function CalendarPage({
         </p>
       </div>
 
-      <nav className="mt-5 flex gap-2 text-sm font-medium">
-        <Link href="/calendar" className={pillClass(!showPast)}>
-          Upcoming
-        </Link>
-        <Link href="/calendar?past=1" className={pillClass(showPast)}>
-          Past
-        </Link>
-      </nav>
+      <div className="mt-5">
+        <MonthGrid
+          month={month}
+          markers={markers}
+          selectedDay={selectedDay}
+          hrefForDay={(d) => `/calendar?month=${ym}&day=${d}`}
+          prevHref={`/calendar?month=${prev}`}
+          nextHref={`/calendar?month=${next}`}
+        />
+      </div>
 
       {canManage && (
         <div className="mt-5">
@@ -87,47 +102,31 @@ export default async function CalendarPage({
       )}
 
       <section className="mt-6 flex-1">
-        {events.length === 0 ? (
-          <p className="text-sm text-muted">
-            {showPast
-              ? "No past events yet."
-              : "No upcoming events — check back soon."}
-          </p>
-        ) : showPast ? (
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
+          {dayLabel(selectedDay)}
+          {selectedDay === todayKey && (
+            <span className="ml-2 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+              today
+            </span>
+          )}
+        </h2>
+
+        {dayOccurrences.length === 0 ? (
+          <p className="text-sm text-muted">Nothing on this day.</p>
+        ) : (
           <ul className="flex flex-col gap-3">
-            {events.map((event) => (
-              <li key={event.id}>
-                <EventCard event={event} canManage={canManage} />
+            {dayOccurrences.map((occ) => (
+              <li key={`${occ.event.id}-${occ.dayKey}`}>
+                <EventCard
+                  event={occ.event}
+                  occursAtIso={occ.startsAtIso}
+                  canManage={canManage}
+                />
               </li>
             ))}
           </ul>
-        ) : (
-          <div className="flex flex-col gap-8">
-            {groups.map((group) => (
-              <div key={group.key}>
-                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
-                  {group.label}
-                </h2>
-                <ul className="flex flex-col gap-3">
-                  {group.events.map((event) => (
-                    <li key={event.id}>
-                      <EventCard event={event} canManage={canManage} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
         )}
       </section>
     </main>
   );
-}
-
-function pillClass(active: boolean): string {
-  return `shrink-0 rounded-full px-4 py-2 transition ${
-    active
-      ? "bg-accent text-background"
-      : "border border-border bg-surface text-muted"
-  }`;
 }

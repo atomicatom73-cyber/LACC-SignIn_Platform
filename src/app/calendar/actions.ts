@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
 import { studioToUtcIso } from "@/lib/studio";
-import type { EventCategory } from "@/lib/types";
+import type { EventCategory, EventRecurrence } from "@/lib/types";
 
 export type EventFormState = { error: string } | { success: true } | null;
 
@@ -16,6 +16,13 @@ const CATEGORIES: readonly EventCategory[] = [
   "other",
 ];
 
+const RECURRENCES: readonly EventRecurrence[] = [
+  "none",
+  "daily",
+  "weekly",
+  "monthly",
+];
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}$/;
 
@@ -26,6 +33,7 @@ type EventValues = {
   location: string | null;
   starts_at: string;
   ends_at: string | null;
+  recurrence: EventRecurrence;
 };
 
 /** Validate the shared event form and convert studio-local inputs to UTC. */
@@ -40,10 +48,14 @@ function parseEventForm(
   const endTime = String(formData.get("end_time") ?? "").trim().slice(0, 5);
   const location = String(formData.get("location") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
+  const recurrence = String(formData.get("recurrence") ?? "none");
 
   if (!title) return { error: "Give the event a title." };
   if (!(CATEGORIES as readonly string[]).includes(category)) {
     return { error: "Pick a category." };
+  }
+  if (!(RECURRENCES as readonly string[]).includes(recurrence)) {
+    return { error: "Pick how the event repeats." };
   }
   if (!DATE_RE.test(date)) return { error: "Pick a date." };
   if (!TIME_RE.test(startTime)) return { error: "Pick a start time." };
@@ -65,6 +77,7 @@ function parseEventForm(
       location: location || null,
       starts_at,
       ends_at,
+      recurrence: recurrence as EventRecurrence,
     },
   };
 }

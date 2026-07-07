@@ -30,6 +30,9 @@ function describeError(err: unknown): string {
 
 export function LoginForm({ initialError }: { initialError?: string | null }) {
   const [mode, setMode] = useState<Mode>("member");
+  const [creating, setCreating] = useState(false);
+
+  const memberCreating = mode === "member" && creating;
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 py-12">
@@ -40,10 +43,14 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
 
         <div className="mb-6 flex flex-col items-center text-center">
           <Logo className="mb-5 h-14 w-14 text-xl" />
-          <h1 className="text-2xl font-bold tracking-tight">Welcome back</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {memberCreating ? "Welcome" : "Welcome back"}
+          </h1>
           <p className="mt-2 text-muted">
             {mode === "member"
-              ? "Just your name and password."
+              ? memberCreating
+                ? "Pick a name, password, and studio PIN — no email needed."
+                : "Just your name and password."
               : "Shared officer account — pick your role and enter its password."}
           </p>
         </div>
@@ -71,7 +78,11 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
 
         <div key={mode} className="anim-fade">
           {mode === "member" ? (
-            <MemberLogin initialError={initialError} />
+            <MemberLogin
+              initialError={initialError}
+              creating={creating}
+              setCreating={setCreating}
+            />
           ) : (
             <OfficerLogin />
           )}
@@ -81,11 +92,19 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
   );
 }
 
-function MemberLogin({ initialError }: { initialError?: string | null }) {
+function MemberLogin({
+  initialError,
+  creating,
+  setCreating,
+}: {
+  initialError?: string | null;
+  creating: boolean;
+  setCreating: (v: boolean) => void;
+}) {
   const router = useRouter();
-  const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [pin, setPin] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "error">(
     initialError ? "error" : "idle",
   );
@@ -100,7 +119,7 @@ function MemberLogin({ initialError }: { initialError?: string | null }) {
       let email = memberLoginEmail(name);
 
       if (creating) {
-        const result = await registerMember(name, password);
+        const result = await registerMember(name, password, pin);
         if ("error" in result) {
           setStatus("error");
           setMessage(result.error);
@@ -142,6 +161,18 @@ function MemberLogin({ initialError }: { initialError?: string | null }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {creating && (
+        <div className="rounded-2xl border-2 border-accent bg-accent/10 px-4 py-3 text-center">
+          <div className="text-sm font-bold uppercase tracking-wide text-accent">
+            ⚠️ Paying members only
+          </div>
+          <p className="mt-1 text-sm text-foreground/90">
+            Please don&apos;t create an account unless you&apos;re a paying
+            member of Los Alamos Community Ceramics. Here for a class or
+            visiting? Use the quick sign-in screen instead.
+          </p>
+        </div>
+      )}
       <input
         type="text"
         autoComplete="name"
@@ -161,6 +192,25 @@ function MemberLogin({ initialError }: { initialError?: string | null }) {
         onChange={(e) => setPassword(e.target.value)}
         className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
       />
+      {creating && (
+        <label className="flex flex-col gap-1.5">
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            required
+            pattern="\d{4}"
+            maxLength={4}
+            placeholder="4-digit studio PIN"
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+            className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
+          />
+          <span className="px-1 text-xs text-muted">
+            You&apos;ll tap this PIN on the studio&apos;s quick sign-in screen.
+          </span>
+        </label>
+      )}
       <button
         type="submit"
         disabled={status === "sending"}
@@ -180,7 +230,7 @@ function MemberLogin({ initialError }: { initialError?: string | null }) {
       <button
         type="button"
         onClick={() => {
-          setCreating((v) => !v);
+          setCreating(!creating);
           setStatus("idle");
           setMessage("");
         }}
@@ -190,10 +240,15 @@ function MemberLogin({ initialError }: { initialError?: string | null }) {
           ? "Already have an account? Sign in"
           : "New here? Create an account"}
       </button>
-      {creating && (
+      {creating ? (
         <p className="text-center text-xs text-muted">
           No email needed — your name is your login. Use the same name the
           studio knows you by.
+        </p>
+      ) : (
+        <p className="text-center text-xs text-muted">
+          Forgot your password? Ask the president — they can set a new one for
+          you from their Members page.
         </p>
       )}
     </form>

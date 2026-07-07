@@ -9,7 +9,7 @@ export default function Home() {
           <Logo className="mb-5 h-16 w-16 text-2xl" />
           <h1 className="text-3xl font-bold tracking-tight">LACC Studio</h1>
           <p className="mt-2 text-muted">
-            Sign in, see your chores, and keep up with the studio.
+            Sign in, see your jobs, and keep up with the studio.
           </p>
         </div>
 
@@ -21,7 +21,7 @@ export default function Home() {
             <span>
               <span className="block text-lg font-semibold">My account</span>
               <span className="block text-sm text-background/70">
-                Chores, calendar &amp; announcements
+                Jobs, calendar &amp; announcements
               </span>
             </span>
             <span className="text-2xl">→</span>

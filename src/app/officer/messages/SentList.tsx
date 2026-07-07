@@ -36,26 +36,30 @@ export function SentList({ messages }: { messages: SentMessage[] }) {
             key={message.id}
             className="rounded-2xl border border-border bg-surface px-4 py-4"
           >
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-xs font-semibold uppercase tracking-wide text-accent">
+                {ROLE_LABELS[message.sender_role]}
+              </span>
+              <span className="shrink-0 text-xs text-muted">
+                {formatStudioDateTime(message.created_at)}
+              </span>
+            </div>
+            <div className="mt-1 font-semibold">{message.subject}</div>
+            <p className="mt-2 whitespace-pre-line text-sm text-foreground/90">
+              {message.body}
+            </p>
+
             <button
               type="button"
               onClick={() => setExpandedId(expanded ? null : message.id)}
-              className="w-full text-left"
+              className="mt-3 w-full border-t border-border pt-3 text-left"
             >
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-accent">
-                  {ROLE_LABELS[message.sender_role]}
-                </span>
-                <span className="shrink-0 text-xs text-muted">
-                  {formatStudioDateTime(message.created_at)}
-                </span>
-              </div>
-              <div className="mt-1 font-semibold">{message.subject}</div>
-              <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted">
+              <div className="flex items-center justify-between gap-3 text-xs text-muted">
                 <span>
                   {message.audience === "all" ? "All members" : "Selected members"}
                 </span>
                 <span className="tabular-nums">
-                  {read} of {total} read
+                  {read} of {total} read {expanded ? "▴" : "▾"}
                 </span>
               </div>
               <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-2">
@@ -67,31 +71,27 @@ export function SentList({ messages }: { messages: SentMessage[] }) {
             </button>
 
             {expanded && (
-              <div className="mt-4 border-t border-border pt-4">
-                <p className="whitespace-pre-line text-sm">{message.body}</p>
-
-                <div className="mt-4">
-                  <div className="mb-2 text-xs uppercase tracking-wide text-muted">
-                    Recipients
-                  </div>
-                  <ul className="max-h-64 overflow-y-auto">
-                    {message.recipients.map((r) => (
-                      <li
-                        key={r.member_id}
-                        className="flex items-center justify-between gap-3 border-b border-border/50 py-2 text-sm last:border-b-0"
-                      >
-                        <span>{r.full_name}</span>
-                        {r.read_at ? (
-                          <span className="text-xs text-success">
-                            Read {formatStudioDate(r.read_at)}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted">unread</span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+              <div className="mt-3">
+                <div className="mb-2 text-xs uppercase tracking-wide text-muted">
+                  Recipients
                 </div>
+                <ul className="max-h-64 overflow-y-auto">
+                  {message.recipients.map((r) => (
+                    <li
+                      key={r.member_id}
+                      className="flex items-center justify-between gap-3 border-b border-border/50 py-2 text-sm last:border-b-0"
+                    >
+                      <span>{r.full_name}</span>
+                      {r.read_at ? (
+                        <span className="text-xs text-success">
+                          Read {formatStudioDate(r.read_at)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted">unread</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </li>

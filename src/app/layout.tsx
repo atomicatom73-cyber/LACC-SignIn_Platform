@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "LACC Studio",
   description:
-    "Los Alamos Community Ceramics — member sign-in, chores, calendar, and announcements",
+    "Los Alamos Community Ceramics — member sign-in, jobs, calendar, and announcements",
   applicationName: "LACC Studio",
   appleWebApp: {
     capable: true,

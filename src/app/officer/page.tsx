@@ -52,7 +52,7 @@ export default async function OfficerOverviewPage() {
         <Stat label="Active members" value={String(memberCount)} />
         <Stat label="In the studio now" value={String(inStudio)} />
         <Stat
-          label="Chores this month"
+          label="Jobs this month"
           value={`${done}/${assignments.length}`}
         />
         <Stat
@@ -65,13 +65,13 @@ export default async function OfficerOverviewPage() {
       <div className="anim-stagger mt-8 grid gap-4 sm:grid-cols-2">
         <QuickLink
           href="/officer/chores"
-          title="Chores"
-          description="Assign this month's chores, track statuses, run the monthly reshuffle."
+          title="Jobs"
+          description="Assign this month's jobs, track statuses, run the monthly reshuffle."
         />
         <QuickLink
           href="/officer/members"
           title="Members"
-          description="Roster, roles, chore credits, and absence history."
+          description="Roster, job credits, and absence history."
         />
         <QuickLink
           href="/officer/messages"

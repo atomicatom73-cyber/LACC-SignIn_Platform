@@ -54,6 +54,8 @@ export type Absence = {
 
 export type EventCategory = "class" | "workshop" | "party" | "camp" | "meeting" | "other";
 
+export type EventRecurrence = "none" | "daily" | "weekly" | "monthly";
+
 export type StudioEvent = {
   id: string;
   title: string;
@@ -62,8 +64,23 @@ export type StudioEvent = {
   location: string | null;
   starts_at: string;
   ends_at: string | null;
+  recurrence: EventRecurrence;
   created_by: string | null;
   created_at: string;
+};
+
+export type GuestSignin = {
+  id: string;
+  host_member_id: string;
+  guest_name: string;
+  signed_in_at: string;
+};
+
+export type StudentSignin = {
+  id: string;
+  student_name: string;
+  class_label: string;
+  signed_in_at: string;
 };
 
 export type Message = {

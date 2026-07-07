@@ -106,7 +106,7 @@ export default async function MePage() {
       id: a.id,
       month: a.month,
       status: a.status,
-      choreName: a.chores?.name ?? "Chore",
+      choreName: a.chores?.name ?? "Job",
       choreDescription: a.chores?.description ?? null,
     }),
   );
@@ -137,6 +137,30 @@ export default async function MePage() {
 
       <div className="mt-5">
         <ClockCard openSince={open ? open.signed_in_at : null} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 text-center text-sm font-semibold">
+        {open ? (
+          <Link
+            href="/me/guest"
+            className="rounded-2xl border border-border bg-surface px-4 py-3 transition active:scale-[0.98]"
+          >
+            🍰 Bring a guest
+          </Link>
+        ) : (
+          <span
+            title="Clock in first to bring a guest"
+            className="cursor-not-allowed rounded-2xl border border-border bg-surface px-4 py-3 opacity-50"
+          >
+            🍰 Bring a guest
+          </span>
+        )}
+        <Link
+          href="/kiosk/student"
+          className="rounded-2xl border border-border bg-surface px-4 py-3 transition active:scale-[0.98]"
+        >
+          🎓 Sign in as student
+        </Link>
       </div>
 
       <div className="mt-5">

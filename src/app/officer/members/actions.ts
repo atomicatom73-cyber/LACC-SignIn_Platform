@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { monthLabel } from "@/lib/studio";
 
 /** Result shape shared by the useActionState forms on this page. */
@@ -126,6 +127,52 @@ export async function setActive(
 
   revalidatePath("/officer/members");
   return null;
+}
+
+const PW_WORDS = [
+  "kiln", "glaze", "mesa", "adobe", "raku", "bisque", "terra", "slip",
+  "wedge", "ember", "canyon", "aspen", "pinon", "clay", "wheel", "fire",
+];
+
+/**
+ * President-only: set a fresh random password on a member's account when
+ * they've forgotten theirs. Nobody can see the old password — Supabase only
+ * stores a hash — so a reset is the only recovery path. The new password is
+ * shown once; the president hands it to the member.
+ */
+export async function resetMemberPassword(
+  memberId: string,
+): Promise<{ error: string } | { password: string }> {
+  const { supabase } = await requireOfficer(["president"]);
+
+  if (!memberId) return { error: "Missing member." };
+
+  const { data: target } = await supabase
+    .from("members")
+    .select("user_id, role")
+    .eq("id", memberId)
+    .maybeSingle();
+  if (!target) return { error: "Member not found." };
+  if (target.role !== "member") {
+    return { error: "Officer passwords are managed by handing over the shared login." };
+  }
+  if (!target.user_id) {
+    return { error: "They don't have an account yet — nothing to reset." };
+  }
+
+  const pick = () => PW_WORDS[Math.floor(Math.random() * PW_WORDS.length)];
+  let a = pick();
+  let b = pick();
+  while (b === a) b = pick();
+  const password = `${a}-${b}-${Math.floor(10 + Math.random() * 90)}`;
+
+  const admin = createAdminClient();
+  const { error } = await admin.auth.admin.updateUserById(target.user_id, {
+    password,
+  });
+  if (error) return { error: error.message };
+
+  return { password };
 }
 
 /** Add a kiosk-only member (president + VP). They can claim it later. */

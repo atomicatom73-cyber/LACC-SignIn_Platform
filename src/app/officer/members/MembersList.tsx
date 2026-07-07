@@ -18,9 +18,13 @@ const CHIP_CLASSES: Record<ChipTone, string> = {
 export function MembersList({
   groups,
   viewerRole,
+  month,
+  jobCatalog,
 }: {
   groups: MemberGroup[];
   viewerRole: Role;
+  month: string;
+  jobCatalog: { id: string; name: string }[];
 }) {
   const [query, setQuery] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -95,7 +99,12 @@ export function MembersList({
                     </span>
                   </button>
                   {expanded && (
-                    <MemberDetail member={member} viewerRole={viewerRole} />
+                    <MemberDetail
+                      member={member}
+                      viewerRole={viewerRole}
+                      month={month}
+                      jobCatalog={jobCatalog}
+                    />
                   )}
                 </li>
               );

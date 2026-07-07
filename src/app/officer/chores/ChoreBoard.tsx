@@ -21,7 +21,7 @@ export type BoardChore = {
 
 export type PickerMember = { id: string; full_name: string };
 
-/** The month's assignments, one card per chore, with inline editing. */
+/** The month's assignments, one card per job, with inline editing. */
 export function ChoreBoard({
   month,
   chores,
@@ -34,7 +34,7 @@ export function ChoreBoard({
   if (chores.length === 0) {
     return (
       <p className="text-sm text-muted">
-        No chores to show — add some to the catalog below.
+        No jobs to show — add some to the catalog below.
       </p>
     );
   }
@@ -72,25 +72,30 @@ function ChoreCard({
 
   const assignedIds = new Set(chore.assignees.map((a) => a.memberId));
   const candidates = members.filter((m) => !assignedIds.has(m.id));
-  const filled = chore.assignees.length;
+  const assigned = chore.assignees.length;
+  const completed = chore.assignees.filter(
+    (a) => a.status === "completed",
+  ).length;
 
   return (
     <section className="flex flex-col rounded-2xl border border-border bg-surface px-4 py-4">
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h3 className="font-semibold">
           {chore.name}
           {!chore.active && (
             <span className="ml-2 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-              retired
+              deleted
             </span>
           )}
         </h3>
-        <span
-          className={`shrink-0 text-xs tabular-nums ${
-            filled < chore.slots ? "text-danger" : "text-muted"
-          }`}
-        >
-          {filled}/{chore.slots} filled
+        <span className="shrink-0 text-xs tabular-nums">
+          <span className={completed < assigned ? "text-muted" : "text-success"}>
+            {completed}/{assigned} completed
+          </span>
+          <span className="text-muted"> · </span>
+          <span className={assigned < chore.slots ? "text-danger" : "text-muted"}>
+            {assigned}/{chore.slots} assigned
+          </span>
         </span>
       </div>
       {chore.description && (

@@ -41,7 +41,7 @@ export function ChoresCard({
     <section className="rounded-2xl border border-border bg-surface px-4 py-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-          My chores
+          My jobs
         </h2>
         {creditsAvailable > 0 && (
           <span className="rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-xs font-semibold text-accent">
@@ -52,14 +52,14 @@ export function ChoresCard({
 
       {absentThisMonth && (
         <p className="mt-3 rounded-xl border border-success/40 bg-success/10 px-3 py-2 text-sm">
-          You&apos;re marked absent this month — no chore for you. 🌿
+          You&apos;re marked absent this month — no job for you. 🌿
         </p>
       )}
 
       {chores.length === 0 ? (
         !absentThisMonth && (
           <p className="mt-3 text-sm text-muted">
-            Nothing assigned right now. Enjoy the wheel! 🏺
+            No jobs assigned right now. Enjoy the wheel! 🏺
           </p>
         )
       ) : (

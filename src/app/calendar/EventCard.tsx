@@ -24,15 +24,25 @@ function endClock(iso: string): string {
   });
 }
 
+const RECURRENCE_LABEL: Record<string, string> = {
+  daily: "Repeats daily",
+  weekly: "Repeats weekly",
+  monthly: "Repeats monthly",
+};
+
 /**
  * One calendar event. Officers who manage the calendar get Edit (inline form)
- * and Delete (two-tap confirm) controls.
+ * and Delete (two-tap confirm) controls. For recurring events pass
+ * `occursAtIso` so the card shows this occurrence's date; editing/deleting
+ * always affects the whole series.
  */
 export function EventCard({
   event,
+  occursAtIso,
   canManage,
 }: {
   event: StudioEvent;
+  occursAtIso?: string;
   canManage: boolean;
 }) {
   const [editing, setEditing] = useState(false);
@@ -67,16 +77,23 @@ export function EventCard({
 
   return (
     <article className="rounded-2xl border border-border bg-surface px-4 py-4">
-      <span
-        className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${chip.className}`}
-      >
-        {chip.label}
+      <span className="flex flex-wrap items-center gap-2">
+        <span
+          className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${chip.className}`}
+        >
+          {chip.label}
+        </span>
+        {event.recurrence !== "none" && (
+          <span className="inline-block rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-muted">
+            🔁 {RECURRENCE_LABEL[event.recurrence]}
+          </span>
+        )}
       </span>
 
       <h3 className="mt-2 text-base font-semibold">{event.title}</h3>
 
       <div className="mt-1 text-sm text-muted">
-        {formatStudioDateTime(event.starts_at)}
+        {formatStudioDateTime(occursAtIso ?? event.starts_at)}
         {event.ends_at ? ` – ${endClock(event.ends_at)}` : null}
       </div>
 

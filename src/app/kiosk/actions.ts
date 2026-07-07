@@ -1,64 +1,29 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-const KIOSK_COOKIE = "kiosk_ok";
-
-/** Check the shared PIN and unlock the kiosk on this device. */
-export async function unlockKiosk(
-  _prev: { error: string } | null,
-  formData: FormData,
-): Promise<{ error: string } | null> {
-  const pin = String(formData.get("pin") ?? "").trim();
-  const expected = process.env.KIOSK_PIN;
-
-  if (!expected) {
-    return { error: "Kiosk PIN is not configured on the server." };
-  }
-  if (pin !== expected) {
-    return { error: "Incorrect PIN. Try again." };
-  }
-
-  const store = await cookies();
-  store.set(KIOSK_COOKIE, "1", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 60 * 60 * 24 * 30, // 30 days
-    path: "/",
-  });
-  return null;
-}
-
-export async function lockKiosk() {
-  const store = await cookies();
-  store.delete(KIOSK_COOKIE);
-  revalidatePath("/kiosk");
-}
-
-export async function isKioskUnlocked(): Promise<boolean> {
-  const store = await cookies();
-  return store.get(KIOSK_COOKIE)?.value === "1";
-}
-
-/** Toggle a member's shift from the shared kiosk. Returns the new state. */
+/**
+ * Toggle a member's shift from the shared kiosk. Members who set a 4-digit
+ * PIN must enter it; members without one (added by an officer, or from
+ * before PINs existed) tap straight through.
+ */
 export async function toggleKioskShift(
   memberId: string,
-): Promise<{ nowIn: boolean; name: string }> {
-  if (!(await isKioskUnlocked())) {
-    throw new Error("Kiosk is locked.");
-  }
-
+  pin: string,
+): Promise<{ nowIn: boolean; name: string } | { error: string }> {
   const supabase = createAdminClient();
 
   const { data: member, error: memberErr } = await supabase
     .from("members")
-    .select("id, full_name")
+    .select("id, full_name, pin")
     .eq("id", memberId)
     .single();
-  if (memberErr || !member) throw new Error("Member not found.");
+  if (memberErr || !member) return { error: "Member not found." };
+
+  if (member.pin && member.pin !== pin.trim()) {
+    return { error: "Wrong PIN. Try again." };
+  }
 
   const { data: openShift } = await supabase
     .from("shifts")
@@ -81,4 +46,65 @@ export async function toggleKioskShift(
     .insert({ member_id: memberId, source: "kiosk" });
   revalidatePath("/kiosk");
   return { nowIn: true, name: member.full_name };
+}
+
+export type SignInFormState =
+  | { error: string }
+  | { success: true; name: string }
+  | null;
+
+/**
+ * Sign a guest in under a host member picked on the kiosk. The host must
+ * currently be signed in — guests always come in with a member.
+ */
+export async function kioskGuestSignIn(
+  _prev: SignInFormState,
+  formData: FormData,
+): Promise<SignInFormState> {
+  const hostMemberId = String(formData.get("host_member_id") ?? "").trim();
+  const guestName = String(formData.get("guest_name") ?? "").trim();
+  if (!hostMemberId) return { error: "Pick which member is bringing you in." };
+  if (!guestName) return { error: "Enter the guest's name." };
+  if (guestName.length > 80) return { error: "That name is too long." };
+
+  const supabase = createAdminClient();
+
+  const { data: openShift } = await supabase
+    .from("shifts")
+    .select("id")
+    .eq("member_id", hostMemberId)
+    .is("signed_out_at", null)
+    .maybeSingle();
+  if (!openShift) {
+    return { error: "That member isn't signed in — sign in first, then bring your guest." };
+  }
+
+  const { error } = await supabase
+    .from("guest_signins")
+    .insert({ host_member_id: hostMemberId, guest_name: guestName });
+  if (error) return { error: error.message };
+
+  return { success: true, name: guestName };
+}
+
+/** Sign a class student in by name + class label (e.g. "wednesday night class"). */
+export async function studentSignIn(
+  _prev: SignInFormState,
+  formData: FormData,
+): Promise<SignInFormState> {
+  const studentName = String(formData.get("student_name") ?? "").trim();
+  const classLabel = String(formData.get("class_label") ?? "").trim();
+  if (!studentName) return { error: "Enter your name." };
+  if (!classLabel) return { error: "Enter which class you're here for." };
+  if (studentName.length > 80 || classLabel.length > 80) {
+    return { error: "Keep the name and class under 80 characters." };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("student_signins")
+    .insert({ student_name: studentName, class_label: classLabel });
+  if (error) return { error: error.message };
+
+  return { success: true, name: studentName };
 }

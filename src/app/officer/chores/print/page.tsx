@@ -1,0 +1,106 @@
+import Link from "next/link";
+import { requireOfficer } from "@/lib/auth";
+import { monthKey, monthLabel } from "@/lib/studio";
+import { PrintButton } from "./PrintButton";
+
+export const dynamic = "force-dynamic";
+
+type AssignmentRow = {
+  status: "pending" | "completed";
+  chores: { id: string; name: string; description: string | null } | null;
+  members: { full_name: string } | null;
+};
+
+/**
+ * Printable view of a month's published job assignments — white paper,
+ * black ink, one row per job. Any officer can print and pin it up.
+ */
+export default async function PrintAssignmentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>;
+}) {
+  const { supabase } = await requireOfficer();
+
+  const { month: rawMonth } = await searchParams;
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawMonth ?? "")
+    ? `${rawMonth}-01`
+    : monthKey();
+
+  const { data } = await supabase
+    .from("chore_assignments")
+    .select("status, chores(id, name, description), members(full_name)")
+    .eq("month", month);
+
+  const rows = (data ?? []) as unknown as AssignmentRow[];
+
+  const byJob = new Map<
+    string,
+    { name: string; description: string | null; members: string[] }
+  >();
+  for (const row of rows) {
+    if (!row.chores) continue;
+    const entry = byJob.get(row.chores.id) ?? {
+      name: row.chores.name,
+      description: row.chores.description,
+      members: [],
+    };
+    entry.members.push(row.members?.full_name ?? "Unknown member");
+    byJob.set(row.chores.id, entry);
+  }
+  const jobs = [...byJob.values()]
+    .map((j) => ({ ...j, members: j.members.sort((a, b) => a.localeCompare(b)) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <main className="anim-fade mx-auto min-h-dvh w-full max-w-2xl bg-white px-8 py-8 text-black print:max-w-none print:px-0 print:py-0">
+      <div className="mb-6 flex items-center justify-between gap-4 print:hidden">
+        <Link href="/officer/chores" className="text-sm text-neutral-500">
+          ← Back to jobs
+        </Link>
+        <PrintButton />
+      </div>
+
+      <h1 className="text-2xl font-bold">
+        LACC Studio Jobs — {monthLabel(month)}
+      </h1>
+      <p className="mt-1 text-sm text-neutral-600">
+        Los Alamos Community Ceramics · monthly job assignments
+      </p>
+
+      {jobs.length === 0 ? (
+        <p className="mt-8 text-neutral-600">
+          Nothing has been published for {monthLabel(month)} yet.
+        </p>
+      ) : (
+        <table className="mt-6 w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b-2 border-black text-left">
+              <th className="py-2 pr-4 font-bold">Job</th>
+              <th className="py-2 font-bold">Assigned to</th>
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map((job) => (
+              <tr key={job.name} className="border-b border-neutral-300 align-top">
+                <td className="py-2.5 pr-4">
+                  <div className="font-semibold">{job.name}</div>
+                  {job.description && (
+                    <div className="mt-0.5 text-xs text-neutral-600">
+                      {job.description}
+                    </div>
+                  )}
+                </td>
+                <td className="py-2.5">{job.members.join(", ")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <p className="mt-8 text-xs text-neutral-500">
+        Done with your job? Mark it complete in the LACC Studio app.
+      </p>
+    </main>
+  );
+}

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { formatDuration } from "@/lib/time";
 import { toggleKioskShift } from "./actions";
 
 export type RosterMember = {
   id: string;
   full_name: string;
+  hasPin: boolean;
   openSince: string | null;
 };
 
@@ -15,22 +16,35 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [pinFor, setPinFor] = useState<RosterMember | null>(null);
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState<string | null>(null);
+  const pinInputRef = useRef<HTMLInputElement>(null);
 
   const visible = members.filter((m) =>
     m.full_name.toLowerCase().includes(query.trim().toLowerCase()),
   );
 
-  function handleTap(member: RosterMember) {
+  function run(member: RosterMember, pinValue: string) {
     setBusyId(member.id);
     startTransition(async () => {
       try {
         // The server action calls revalidatePath("/kiosk"), which refreshes
         // the roster automatically — no router.refresh() needed.
-        const res = await toggleKioskShift(member.id);
+        const res = await toggleKioskShift(member.id, pinValue);
+        if ("error" in res) {
+          setPinError(res.error);
+          setPin("");
+          pinInputRef.current?.focus();
+          return;
+        }
         const first = res.name.split(" ")[0];
         setToast(
           res.nowIn ? `Welcome, ${first}! 👋` : `See you, ${first}! ✌️`,
         );
+        setPinFor(null);
+        setPin("");
+        setPinError(null);
       } catch {
         setToast("Something went wrong. Try again.");
       } finally {
@@ -38,6 +52,20 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
       }
     });
   }
+
+  function handleTap(member: RosterMember) {
+    if (member.hasPin) {
+      setPinFor(member);
+      setPin("");
+      setPinError(null);
+    } else {
+      run(member, "");
+    }
+  }
+
+  useEffect(() => {
+    if (pinFor) pinInputRef.current?.focus();
+  }, [pinFor]);
 
   useEffect(() => {
     if (!toast) return;
@@ -48,7 +76,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   if (members.length === 0) {
     return (
       <p className="mt-12 text-center text-muted">
-        No active members yet. Add members in Supabase to populate the roster.
+        No active members yet. Create an account or ask an officer to add you.
       </p>
     );
   }
@@ -81,10 +109,64 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
         </div>
       )}
 
+      {pinFor && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 px-6 backdrop-blur-sm">
+          <div className="anim-fade w-full max-w-xs rounded-3xl border border-border bg-surface p-6 text-center">
+            <div className="text-lg font-semibold">{pinFor.full_name}</div>
+            <p className="mt-1 text-sm text-muted">
+              Enter your 4-digit PIN to{" "}
+              {pinFor.openSince ? "sign out" : "sign in"}.
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (pin.length === 4) run(pinFor, pin);
+              }}
+            >
+              <input
+                ref={pinInputRef}
+                type="password"
+                inputMode="numeric"
+                pattern="\d{4}"
+                maxLength={4}
+                autoComplete="off"
+                value={pin}
+                onChange={(e) => {
+                  setPin(e.target.value.replace(/\D/g, ""));
+                  setPinError(null);
+                }}
+                placeholder="••••"
+                className="mt-4 w-full rounded-2xl border border-border bg-surface-2 px-5 py-4 text-center text-2xl tracking-[0.5em] outline-none focus:border-accent"
+              />
+              {pinError && (
+                <p className="mt-2 text-sm text-danger">{pinError}</p>
+              )}
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={pending || pin.length !== 4}
+                  className="flex-1 rounded-2xl bg-accent px-4 py-3 font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
+                >
+                  {pending ? "…" : pinFor.openSince ? "Sign out" : "Sign in"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPinFor(null)}
+                  disabled={pending}
+                  className="rounded-2xl border border-border px-4 py-3 text-muted transition active:scale-[0.98]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div
         role="status"
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 bottom-[max(2rem,env(safe-area-inset-bottom))] flex justify-center px-4"
+        className="pointer-events-none fixed inset-x-0 bottom-[max(2rem,env(safe-area-inset-bottom))] z-50 flex justify-center px-4"
       >
         {toast && (
           <div className="rounded-full bg-foreground px-6 py-3 text-lg font-semibold text-background shadow-lg">

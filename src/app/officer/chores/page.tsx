@@ -95,9 +95,17 @@ export default async function OfficerChoresPage({
 
   return (
     <main className="anim-fade">
-      <h1 className="text-2xl font-bold tracking-tight">Chores</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold tracking-tight">Jobs</h1>
+        <Link
+          href={`/officer/chores/print?month=${month.slice(0, 7)}`}
+          className="rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-muted transition active:scale-[0.98]"
+        >
+          🖨️ Printable view
+        </Link>
+      </div>
       <p className="mt-1 text-muted">
-        Assignments, the chore catalog, and the monthly reshuffle.
+        Assignments, the job catalog, and the monthly reshuffle.
       </p>
 
       <nav className="mt-5 flex items-center gap-3">
@@ -146,7 +154,7 @@ export default async function OfficerChoresPage({
 
       <section className="mt-10">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
-          Chore catalog
+          Job catalog
         </h2>
         <CatalogManager chores={chores} />
       </section>

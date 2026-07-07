@@ -1,15 +1,12 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import type { Chore } from "@/lib/types";
-import { createChore, setChoreActive, updateChore } from "./actions";
+import { createChore, deleteChore, updateChore } from "./actions";
 
-/** The chore catalog: add, edit, retire. Retired chores keep their history. */
+/** The job catalog: add, edit, delete. */
 export function CatalogManager({ chores }: { chores: Chore[] }) {
   const [addState, addAction, addPending] = useActionState(createChore, null);
-
-  const active = chores.filter((c) => c.active);
-  const retired = chores.filter((c) => !c.active);
 
   return (
     <div className="rounded-2xl border border-border bg-surface px-4 py-4">
@@ -18,7 +15,7 @@ export function CatalogManager({ chores }: { chores: Chore[] }) {
           name="name"
           required
           autoComplete="off"
-          placeholder="New chore name"
+          placeholder="New job name"
           className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
         />
         <input
@@ -54,28 +51,14 @@ export function CatalogManager({ chores }: { chores: Chore[] }) {
 
       {chores.length === 0 ? (
         <p className="mt-4 text-sm text-muted">
-          The catalog is empty — add the studio&apos;s recurring chores above.
+          The catalog is empty — add the studio&apos;s recurring jobs above.
         </p>
       ) : (
-        <>
-          <ul className="mt-4 flex flex-col gap-2">
-            {active.map((chore) => (
-              <CatalogRow key={chore.id} chore={chore} />
-            ))}
-          </ul>
-          {retired.length > 0 && (
-            <>
-              <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">
-                Retired
-              </h3>
-              <ul className="mt-2 flex flex-col gap-2">
-                {retired.map((chore) => (
-                  <CatalogRow key={chore.id} chore={chore} />
-                ))}
-              </ul>
-            </>
-          )}
-        </>
+        <ul className="mt-4 flex flex-col gap-2">
+          {chores.map((chore) => (
+            <CatalogRow key={chore.id} chore={chore} />
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -87,22 +70,34 @@ function CatalogRow({ chore }: { chore: Chore }) {
     updateChore,
     null,
   );
-  const [toggleError, setToggleError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const toggleActive = () =>
+  // Confirm state times out so a stray first tap doesn't linger.
+  useEffect(() => {
+    if (!confirming) return;
+    const id = setTimeout(() => setConfirming(false), 4000);
+    return () => clearTimeout(id);
+  }, [confirming]);
+
+  const handleDelete = () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
     startTransition(async () => {
-      const result = await setChoreActive(chore.id, !chore.active);
-      setToggleError(result?.error ?? null);
+      const result = await deleteChore(chore.id);
+      setDeleteError(result?.error ?? null);
     });
+  };
 
   return (
     <li className="rounded-xl border border-border bg-surface-2 px-3 py-2.5">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <span className={`text-sm font-medium ${chore.active ? "" : "text-muted"}`}>
-            {chore.name}
-          </span>
+          <span className="text-sm font-medium">{chore.name}</span>
           <span className="ml-2 text-xs tabular-nums text-muted">
             ×{chore.slots}
           </span>
@@ -120,15 +115,19 @@ function CatalogRow({ chore }: { chore: Chore }) {
             {editing ? "Close" : "Edit"}
           </button>
           <button
-            onClick={toggleActive}
+            onClick={handleDelete}
             disabled={pending}
-            className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition active:scale-[0.97] disabled:opacity-60 ${
-              chore.active
-                ? "border-border text-danger"
-                : "border-success/40 text-success"
+            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition active:scale-[0.97] disabled:opacity-60 ${
+              confirming
+                ? "bg-danger text-background"
+                : "border border-border text-danger"
             }`}
           >
-            {chore.active ? "Retire" : "Restore"}
+            {pending
+              ? "…"
+              : confirming
+                ? "Tap again to delete"
+                : "Delete"}
           </button>
         </div>
       </div>
@@ -174,7 +173,7 @@ function CatalogRow({ chore }: { chore: Chore }) {
       {editState?.success && (
         <p className="mt-2 text-sm text-success">{editState.success}</p>
       )}
-      {toggleError && <p className="mt-2 text-sm text-danger">{toggleError}</p>}
+      {deleteError && <p className="mt-2 text-sm text-danger">{deleteError}</p>}
     </li>
   );
 }
