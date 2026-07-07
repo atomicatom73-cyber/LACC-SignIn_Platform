@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
+import { memberLoginEmail } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { monthLabel } from "@/lib/studio";
 
@@ -135,15 +136,16 @@ const PW_WORDS = [
 ];
 
 /**
- * President-only: set a fresh random password on a member's account when
+ * President/VP: set a fresh random password on a member's account when
  * they've forgotten theirs. Nobody can see the old password — Supabase only
  * stores a hash — so a reset is the only recovery path. The new password is
- * shown once; the president hands it to the member.
+ * shown once; the officer hands it to the member. (Members who still know
+ * their PIN can also reset it themselves from the login screen.)
  */
 export async function resetMemberPassword(
   memberId: string,
 ): Promise<{ error: string } | { password: string }> {
-  const { supabase } = await requireOfficer(["president"]);
+  const { supabase } = await requireOfficer(["president", "vice_president"]);
 
   if (!memberId) return { error: "Missing member." };
 
@@ -173,6 +175,132 @@ export async function resetMemberPassword(
   if (error) return { error: error.message };
 
   return { password };
+}
+
+/**
+ * President/VP: set a fresh random kiosk PIN on a member when they've
+ * forgotten theirs. Shown once, handed over in person. (Members who still
+ * know their password can also reset it themselves from the login screen.)
+ */
+export async function resetMemberPin(
+  memberId: string,
+): Promise<{ error: string } | { pin: string }> {
+  const { supabase } = await requireOfficer(["president", "vice_president"]);
+
+  if (!memberId) return { error: "Missing member." };
+
+  const { data: target } = await supabase
+    .from("members")
+    .select("id, role")
+    .eq("id", memberId)
+    .maybeSingle();
+  if (!target) return { error: "Member not found." };
+  if (target.role !== "member") {
+    return { error: "Officer accounts don't use kiosk PINs." };
+  }
+
+  const pin = String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
+
+  const { error } = await supabase
+    .from("members")
+    .update({ pin })
+    .eq("id", memberId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return { pin };
+}
+
+/**
+ * President/VP: fix a mistyped name. Renames the roster row and, when the
+ * member has an account, moves their name-based login to match — they sign
+ * in with the corrected name afterwards.
+ */
+export async function renameMember(
+  memberId: string,
+  newNameRaw: string,
+): Promise<{ error: string } | { name: string }> {
+  await requireOfficer(["president", "vice_president"]);
+
+  if (!memberId) return { error: "Missing member." };
+  const newName = newNameRaw.trim().replace(/\s+/g, " ");
+  if (newName.length < 2) return { error: "Enter the full name." };
+  if (newName.length > 80) return { error: "That name is too long." };
+
+  const admin = createAdminClient();
+  const { data: target } = await admin
+    .from("members")
+    .select("id, user_id, full_name, role")
+    .eq("id", memberId)
+    .maybeSingle();
+  if (!target) return { error: "Member not found." };
+  if (target.role !== "member") {
+    return { error: "Officer accounts can't be renamed." };
+  }
+
+  if (target.user_id) {
+    const email = memberLoginEmail(newName);
+    if (!email) return { error: "Please use letters or numbers in the name." };
+    const { error } = await admin.auth.admin.updateUserById(target.user_id, {
+      email,
+      email_confirm: true,
+      user_metadata: { full_name: newName },
+    });
+    if (error) {
+      if (`${error.message}`.toLowerCase().includes("already")) {
+        return {
+          error:
+            "Another account already uses that name — add a middle name or initial.",
+        };
+      }
+      return { error: error.message };
+    }
+  }
+
+  const { error } = await admin
+    .from("members")
+    .update({ full_name: newName })
+    .eq("id", memberId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return { name: newName };
+}
+
+/**
+ * President/VP: permanently delete a member — their login and their whole
+ * history (shifts, jobs, credits, absences, messages) via FK cascades. The
+ * escape hatch for someone who forgot both password and PIN: delete the
+ * account and let them create a fresh one.
+ */
+export async function deleteMemberAccount(
+  memberId: string,
+): Promise<{ error: string } | null> {
+  await requireOfficer(["president", "vice_president"]);
+
+  if (!memberId) return { error: "Missing member." };
+
+  const admin = createAdminClient();
+  const { data: target } = await admin
+    .from("members")
+    .select("id, user_id, role")
+    .eq("id", memberId)
+    .maybeSingle();
+  if (!target) return { error: "Member not found." };
+  if (target.role !== "member") {
+    return { error: "Officer accounts can't be deleted." };
+  }
+
+  if (target.user_id) {
+    const { error } = await admin.auth.admin.deleteUser(target.user_id);
+    if (error) return { error: error.message };
+  }
+
+  const { error } = await admin.from("members").delete().eq("id", memberId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  return null;
 }
 
 /** Add a kiosk-only member (president + VP). They can claim it later. */

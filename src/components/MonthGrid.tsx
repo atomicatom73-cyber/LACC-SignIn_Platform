@@ -6,6 +6,12 @@ export type DayMarker = {
   count?: number;
   /** Accent dots for up to 3 items (e.g. events). */
   dots?: number;
+  /**
+   * Event titles for the day. On sm+ screens the cell grows and shows them
+   * inline so the month is readable without tapping; phones keep the dots
+   * (cells are too small for text there).
+   */
+  labels?: string[];
 };
 
 /**
@@ -31,6 +37,7 @@ export function MonthGrid({
   const firstWeekday = new Date(Date.UTC(y, m - 1, 1)).getUTCDay(); // 0 = Sun
   const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const todayKey = studioDayKey();
+  const hasLabels = Object.values(markers).some((mk) => mk.labels?.length);
 
   const cells: (string | null)[] = [
     ...Array.from({ length: firstWeekday }, () => null),
@@ -76,11 +83,16 @@ export function MonthGrid({
           const marker = markers[dayKey];
           const selected = dayKey === selectedDay;
           const isToday = dayKey === todayKey;
+          const labels = marker?.labels ?? [];
           return (
             <Link
               key={dayKey}
               href={hrefForDay(dayKey)}
-              className={`flex aspect-square flex-col items-center justify-center gap-0.5 rounded-xl border text-sm transition active:scale-[0.95] ${
+              className={`flex flex-col items-center justify-center gap-0.5 rounded-xl border text-sm transition active:scale-[0.95] ${
+                hasLabels
+                  ? "aspect-square sm:aspect-auto sm:min-h-20 sm:justify-start sm:gap-1 sm:p-1"
+                  : "aspect-square"
+              } ${
                 selected
                   ? "border-accent bg-accent/15 font-bold text-accent"
                   : isToday
@@ -97,6 +109,32 @@ export function MonthGrid({
                 >
                   {marker.count}
                 </span>
+              ) : labels.length > 0 ? (
+                <>
+                  <span
+                    className={`flex gap-0.5 ${hasLabels ? "sm:hidden" : ""}`}
+                    aria-hidden
+                  >
+                    {Array.from({ length: Math.min(labels.length, 3) }, (_, d) => (
+                      <span key={d} className="h-1 w-1 rounded-full bg-accent" />
+                    ))}
+                  </span>
+                  <span className="hidden w-full min-w-0 flex-col gap-0.5 sm:flex">
+                    {labels.slice(0, 2).map((label, d) => (
+                      <span
+                        key={d}
+                        className="truncate rounded bg-accent/15 px-1 text-[10px] font-medium leading-tight text-accent"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                    {labels.length > 2 && (
+                      <span className="px-1 text-[9px] leading-tight text-muted">
+                        +{labels.length - 2} more
+                      </span>
+                    )}
+                  </span>
+                </>
               ) : marker?.dots ? (
                 <span className="flex gap-0.5" aria-hidden>
                   {Array.from({ length: Math.min(marker.dots, 3) }, (_, d) => (

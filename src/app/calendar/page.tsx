@@ -1,10 +1,12 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { requireMember } from "@/lib/auth";
+import Form from "next/form";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { canManageCalendar, isOfficer } from "@/lib/roles";
 import {
   addMonths,
   dayLabel,
+  formatStudioClock,
   monthKey,
   studioDayKey,
   studioToUtcIso,
@@ -18,20 +20,49 @@ import { EventCard } from "./EventCard";
 
 export const dynamic = "force-dynamic";
 
+const EVENT_COLUMNS =
+  "id, title, description, category, location, starts_at, ends_at, recurrence, created_by, created_at";
+
+/** "2026-07-14" → "Mon 14" for the agenda rail. */
+function shortDay(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; day?: string }>;
+  searchParams: Promise<{ month?: string; day?: string; q?: string }>;
 }) {
-  const { supabase, member } = await requireMember();
-  if (!member) redirect("/me"); // /me shows the profile-setup hint
+  // The calendar is public — anyone with the link (or the home-page button)
+  // can read it. A logged-in session only adds the right back-link and, for
+  // president/VP, the manage controls.
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  let role: string | null = null;
+  if (user) {
+    const { data } = await supabase
+      .from("members")
+      .select("role")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    role = data?.role ?? null;
+  }
 
-  const { month: rawMonth, day: rawDay } = await searchParams;
+  const { month: rawMonth, day: rawDay, q: rawQ } = await searchParams;
   const currentMonth = monthKey();
   const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawMonth ?? "")
     ? `${rawMonth}-01`
     : currentMonth;
   const ym = month.slice(0, 7);
+  // PostgREST `or=` syntax breaks on commas/parens; strip them from searches.
+  const query = (rawQ ?? "").replace(/[,()]/g, " ").trim().slice(0, 80);
 
   const todayKey = studioDayKey();
   const selectedDay =
@@ -41,29 +72,52 @@ export default async function CalendarPage({
         ? todayKey
         : `${ym}-01`;
 
+  // Events are public info, and anonymous visitors have no session that RLS
+  // would let through — read them with the server-side service role.
+  const admin = createAdminClient();
+
   // Events that can put an occurrence in this month: anything recurring that
   // started before month end, plus one-offs starting inside the month.
   const startUtc = studioToUtcIso(`${ym}-01`, "00:00");
   const endUtc = studioToUtcIso(`${addMonths(month, 1).slice(0, 7)}-01`, "00:00");
-  const { data } = await supabase
+  const { data } = await admin
     .from("events")
-    .select(
-      "id, title, description, category, location, starts_at, ends_at, recurrence, created_by, created_at",
-    )
+    .select(EVENT_COLUMNS)
     .lt("starts_at", endUtc)
     .or(`recurrence.neq.none,starts_at.gte.${startUtc}`)
     .order("starts_at", { ascending: true });
 
   const events: StudioEvent[] = data ?? [];
-  const canManage = canManageCalendar(member.role);
-  const backHref = isOfficer(member.role) ? "/officer" : "/me";
+  const canManage = canManageCalendar(role);
+  const backHref = role === null ? "/" : isOfficer(role) ? "/officer" : "/me";
+
+  // Search spans ALL events (any month), not just the visible one.
+  let results: StudioEvent[] = [];
+  if (query) {
+    const pattern = `%${query}%`;
+    const { data: found } = await admin
+      .from("events")
+      .select(EVENT_COLUMNS)
+      .or(
+        `title.ilike.${pattern},description.ilike.${pattern},location.ilike.${pattern}`,
+      )
+      .order("starts_at", { ascending: true })
+      .limit(30);
+    results = found ?? [];
+  }
 
   const byDay = occurrencesByDay(events, month);
   const markers: Record<string, DayMarker> = {};
   for (const [key, list] of byDay) {
-    markers[key] = { dots: list.length };
+    markers[key] = {
+      dots: list.length,
+      labels: list.map((occ) => occ.event.title),
+    };
   }
   const dayOccurrences = byDay.get(selectedDay) ?? [];
+  const monthDays = [...byDay.entries()].sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
 
   const prev = addMonths(month, -1).slice(0, 7);
   const next = addMonths(month, 1).slice(0, 7);
@@ -84,49 +138,150 @@ export default async function CalendarPage({
         </p>
       </div>
 
-      <div className="mt-5">
-        <MonthGrid
-          month={month}
-          markers={markers}
-          selectedDay={selectedDay}
-          hrefForDay={(d) => `/calendar?month=${ym}&day=${d}`}
-          prevHref={`/calendar?month=${prev}`}
-          nextHref={`/calendar?month=${next}`}
+      <Form action="/calendar" className="mt-5 flex gap-2">
+        <input type="hidden" name="month" value={ym} />
+        <input
+          type="search"
+          name="q"
+          defaultValue={query}
+          autoComplete="off"
+          placeholder="Search events…"
+          className="min-w-0 flex-1 rounded-2xl border border-border bg-surface px-4 py-3 text-sm outline-none focus:border-accent"
         />
-      </div>
+        <button
+          type="submit"
+          className="shrink-0 rounded-2xl border border-border bg-surface px-4 py-3 text-sm font-semibold text-muted transition active:scale-[0.98]"
+        >
+          Search
+        </button>
+      </Form>
 
-      {canManage && (
-        <div className="mt-5">
-          <AddEvent />
-        </div>
-      )}
-
-      <section className="mt-6 flex-1">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
-          {dayLabel(selectedDay)}
-          {selectedDay === todayKey && (
-            <span className="ml-2 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
-              today
-            </span>
+      {query ? (
+        <section className="mt-6 flex-1">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+              {results.length === 0
+                ? `Nothing matches “${query}”`
+                : `${results.length} match${results.length === 1 ? "" : "es"} for “${query}”`}
+            </h2>
+            <Link
+              href={`/calendar?month=${ym}`}
+              className="shrink-0 text-sm text-accent"
+            >
+              Clear search
+            </Link>
+          </div>
+          {results.length === 0 ? (
+            <p className="text-sm text-muted">
+              Try a shorter word — search covers titles, descriptions, and
+              locations.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {results.map((event) => (
+                <li key={event.id}>
+                  <EventCard event={event} canManage={canManage} />
+                </li>
+              ))}
+            </ul>
           )}
-        </h2>
+        </section>
+      ) : (
+        <>
+          <div className="mt-5">
+            <MonthGrid
+              month={month}
+              markers={markers}
+              selectedDay={selectedDay}
+              hrefForDay={(d) => `/calendar?month=${ym}&day=${d}`}
+              prevHref={`/calendar?month=${prev}`}
+              nextHref={`/calendar?month=${next}`}
+            />
+          </div>
 
-        {dayOccurrences.length === 0 ? (
-          <p className="text-sm text-muted">Nothing on this day.</p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {dayOccurrences.map((occ) => (
-              <li key={`${occ.event.id}-${occ.dayKey}`}>
-                <EventCard
-                  event={occ.event}
-                  occursAtIso={occ.startsAtIso}
-                  canManage={canManage}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+          {canManage && (
+            <div className="mt-5">
+              <AddEvent />
+            </div>
+          )}
+
+          <section className="mt-6">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
+              {dayLabel(selectedDay)}
+              {selectedDay === todayKey && (
+                <span className="ml-2 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                  today
+                </span>
+              )}
+            </h2>
+
+            {dayOccurrences.length === 0 ? (
+              <p className="text-sm text-muted">Nothing on this day.</p>
+            ) : (
+              <ul className="flex flex-col gap-3">
+                {dayOccurrences.map((occ) => (
+                  <li key={`${occ.event.id}-${occ.dayKey}`}>
+                    <EventCard
+                      event={occ.event}
+                      occursAtIso={occ.startsAtIso}
+                      canManage={canManage}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="mt-8 flex-1">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
+              This month at a glance
+            </h2>
+            {monthDays.length === 0 ? (
+              <p className="text-sm text-muted">
+                No events this month{canManage ? " — add one above." : "."}
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {monthDays.map(([dayKey, occs]) => (
+                  <li key={dayKey}>
+                    <Link
+                      href={`/calendar?month=${ym}&day=${dayKey}`}
+                      className={`flex gap-3 rounded-xl border px-3 py-2.5 transition active:scale-[0.99] ${
+                        dayKey === todayKey
+                          ? "border-accent/50 bg-accent/5"
+                          : "border-border bg-surface"
+                      }`}
+                    >
+                      <span
+                        className={`w-16 shrink-0 pt-0.5 text-xs font-semibold uppercase tracking-wide ${
+                          dayKey === todayKey ? "text-accent" : "text-muted"
+                        }`}
+                      >
+                        {shortDay(dayKey)}
+                      </span>
+                      <span className="flex min-w-0 flex-1 flex-col gap-1">
+                        {occs.map((occ) => (
+                          <span
+                            key={`${occ.event.id}-${occ.dayKey}`}
+                            className="flex min-w-0 items-baseline gap-2 text-sm"
+                          >
+                            <span className="shrink-0 text-xs tabular-nums text-muted">
+                              {formatStudioClock(occ.startsAtIso)}
+                            </span>
+                            <span className="truncate font-medium">
+                              {occ.event.title}
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
     </main>
   );
 }

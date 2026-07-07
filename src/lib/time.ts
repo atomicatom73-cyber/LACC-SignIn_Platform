@@ -1,5 +1,7 @@
 /** Time + duration helpers shared across the app. */
 
+import { STUDIO_TZ, studioDayKey, studioToUtcIso } from "./studio";
+
 export type Shift = {
   id: string;
   member_id: string;
@@ -35,24 +37,32 @@ export function formatHours(hours: number): string {
   return hours.toFixed(1);
 }
 
-/** Start of the current week (Monday 00:00 local time). */
+/**
+ * Start of the current week (Monday 00:00) on the studio's wall clock in
+ * Los Alamos — not wherever the server happens to run.
+ */
 export function startOfWeek(d: Date = new Date()): Date {
-  const date = new Date(d);
-  const day = (date.getDay() + 6) % 7; // 0 = Monday
-  date.setHours(0, 0, 0, 0);
-  date.setDate(date.getDate() - day);
-  return date;
+  const [y, m, day] = studioDayKey(d).split("-").map(Number);
+  const dow = (new Date(Date.UTC(y, m - 1, day)).getUTCDay() + 6) % 7; // 0 = Monday
+  const monday = new Date(Date.UTC(y, m - 1, day - dow))
+    .toISOString()
+    .slice(0, 10);
+  return new Date(studioToUtcIso(monday, "00:00"));
 }
 
+/** "…Z" → e.g. "6:01 PM" on the studio (America/Denver) wall clock. */
 export function formatClock(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: STUDIO_TZ,
     hour: "numeric",
     minute: "2-digit",
   });
 }
 
+/** "…Z" → e.g. "Mon, Jul 14" in studio (America/Denver) time. */
 export function formatDay(iso: string): string {
-  return new Date(iso).toLocaleDateString([], {
+  return new Date(iso).toLocaleDateString("en-US", {
+    timeZone: STUDIO_TZ,
     weekday: "short",
     month: "short",
     day: "numeric",

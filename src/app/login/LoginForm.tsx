@@ -5,15 +5,21 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/Brand";
+import { PasswordInput } from "@/components/PasswordInput";
 import {
   OFFICER_ACCOUNTS,
   OFFICER_ROLES,
   ROLE_LABELS,
   memberLoginEmail,
 } from "@/lib/roles";
-import { registerMember } from "./actions";
+import {
+  registerMember,
+  resetPasswordWithPin,
+  resetPinWithPassword,
+} from "./actions";
 
 type Mode = "member" | "officer";
+type MemberView = "signin" | "create" | "forgot-password" | "forgot-pin";
 
 /**
  * Turn any thrown value into a message the person at the studio can act on.
@@ -28,11 +34,36 @@ function describeError(err: unknown): string {
   return message || "Something went wrong — please try again.";
 }
 
+const HEADINGS: Record<MemberView, { title: string; blurb: string }> = {
+  signin: { title: "Welcome back", blurb: "Just your name and password." },
+  create: {
+    title: "Welcome",
+    blurb: "Pick a name, password, and studio PIN — no email needed.",
+  },
+  "forgot-password": {
+    title: "Reset your password",
+    blurb: "Prove it's you with your studio PIN, then pick a new password.",
+  },
+  "forgot-pin": {
+    title: "Reset your PIN",
+    blurb: "Prove it's you with your password, then pick a new 4-digit PIN.",
+  },
+};
+
+const FIELD_CLASS =
+  "rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent";
+
 export function LoginForm({ initialError }: { initialError?: string | null }) {
   const [mode, setMode] = useState<Mode>("member");
-  const [creating, setCreating] = useState(false);
+  const [view, setView] = useState<MemberView>("signin");
 
-  const memberCreating = mode === "member" && creating;
+  const heading =
+    mode === "member"
+      ? HEADINGS[view]
+      : {
+          title: "Welcome back",
+          blurb: "Shared officer account — pick your role and enter its password.",
+        };
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 py-12">
@@ -42,17 +73,9 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
         </Link>
 
         <div className="mb-6 flex flex-col items-center text-center">
-          <Logo className="mb-5 h-14 w-14 text-xl" />
-          <h1 className="text-2xl font-bold tracking-tight">
-            {memberCreating ? "Welcome" : "Welcome back"}
-          </h1>
-          <p className="mt-2 text-muted">
-            {mode === "member"
-              ? memberCreating
-                ? "Pick a name, password, and studio PIN — no email needed."
-                : "Just your name and password."
-              : "Shared officer account — pick your role and enter its password."}
-          </p>
+          <Logo className="mb-5 h-20 w-20" />
+          <h1 className="text-2xl font-bold tracking-tight">{heading.title}</h1>
+          <p className="mt-2 text-muted">{heading.blurb}</p>
         </div>
 
         <div className="mb-6 grid grid-cols-2 rounded-2xl border border-border bg-surface p-1 text-sm font-medium">
@@ -76,15 +99,19 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
           </button>
         </div>
 
-        <div key={mode} className="anim-fade">
-          {mode === "member" ? (
+        <div key={`${mode}-${view}`} className="anim-fade">
+          {mode === "officer" ? (
+            <OfficerLogin />
+          ) : view === "forgot-password" ? (
+            <ForgotPassword onBack={() => setView("signin")} />
+          ) : view === "forgot-pin" ? (
+            <ForgotPin onBack={() => setView("signin")} />
+          ) : (
             <MemberLogin
               initialError={initialError}
-              creating={creating}
-              setCreating={setCreating}
+              view={view}
+              setView={setView}
             />
-          ) : (
-            <OfficerLogin />
           )}
         </div>
       </div>
@@ -94,14 +121,15 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
 
 function MemberLogin({
   initialError,
-  creating,
-  setCreating,
+  view,
+  setView,
 }: {
   initialError?: string | null;
-  creating: boolean;
-  setCreating: (v: boolean) => void;
+  view: "signin" | "create";
+  setView: (v: MemberView) => void;
 }) {
   const router = useRouter();
+  const creating = view === "create";
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [pin, setPin] = useState("");
@@ -180,22 +208,20 @@ function MemberLogin({
         placeholder="Your full name"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
+        className={FIELD_CLASS}
       />
-      <input
-        type="password"
+      <PasswordInput
         autoComplete={creating ? "new-password" : "current-password"}
         required
         minLength={creating ? 8 : undefined}
         placeholder={creating ? "Choose a password (8+ characters)" : "Password"}
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
+        className={FIELD_CLASS}
       />
       {creating && (
         <label className="flex flex-col gap-1.5">
-          <input
-            type="text"
+          <PasswordInput
             inputMode="numeric"
             autoComplete="off"
             required
@@ -204,7 +230,7 @@ function MemberLogin({
             placeholder="4-digit studio PIN"
             value={pin}
             onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-            className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
+            className={FIELD_CLASS}
           />
           <span className="px-1 text-xs text-muted">
             You&apos;ll tap this PIN on the studio&apos;s quick sign-in screen.
@@ -229,11 +255,7 @@ function MemberLogin({
       )}
       <button
         type="button"
-        onClick={() => {
-          setCreating(!creating);
-          setStatus("idle");
-          setMessage("");
-        }}
+        onClick={() => setView(creating ? "signin" : "create")}
         className="text-center text-sm text-accent"
       >
         {creating
@@ -246,11 +268,227 @@ function MemberLogin({
           studio knows you by.
         </p>
       ) : (
-        <p className="text-center text-xs text-muted">
-          Forgot your password? Ask the president — they can set a new one for
-          you from their Members page.
-        </p>
+        <div className="flex items-center justify-center gap-4 text-sm">
+          <button
+            type="button"
+            onClick={() => setView("forgot-password")}
+            className="text-muted underline underline-offset-2"
+          >
+            Forgot password?
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("forgot-pin")}
+            className="text-muted underline underline-offset-2"
+          >
+            Forgot PIN?
+          </button>
+        </div>
       )}
+    </form>
+  );
+}
+
+/** Reset a forgotten password by proving the studio PIN, then sign in. */
+function ForgotPassword({ onBack }: { onBack: () => void }) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "error">("idle");
+  const [message, setMessage] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("sending");
+    setMessage("");
+
+    try {
+      const result = await resetPasswordWithPin(name, pin, newPassword);
+      if ("error" in result) {
+        setStatus("error");
+        setMessage(result.error);
+        return;
+      }
+
+      // Password is set — sign straight in with it.
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        email: result.email,
+        password: newPassword,
+      });
+      if (error) {
+        setStatus("error");
+        setMessage(
+          "Password updated! Signing in didn't work though — go back and sign in with your new password.",
+        );
+        return;
+      }
+      router.push("/me");
+      router.refresh();
+    } catch (err) {
+      setStatus("error");
+      setMessage(describeError(err));
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <input
+        type="text"
+        autoComplete="name"
+        required
+        placeholder="Your full name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className={FIELD_CLASS}
+      />
+      <PasswordInput
+        inputMode="numeric"
+        autoComplete="off"
+        required
+        pattern="\d{4}"
+        maxLength={4}
+        placeholder="Your 4-digit studio PIN"
+        value={pin}
+        onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+        className={FIELD_CLASS}
+      />
+      <PasswordInput
+        autoComplete="new-password"
+        required
+        minLength={8}
+        placeholder="New password (8+ characters)"
+        value={newPassword}
+        onChange={(e) => setNewPassword(e.target.value)}
+        className={FIELD_CLASS}
+      />
+      <button
+        type="submit"
+        disabled={status === "sending"}
+        className="rounded-2xl bg-accent px-6 py-4 text-lg font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
+      >
+        {status === "sending" ? "Resetting…" : "Reset password & sign in"}
+      </button>
+      {status === "error" && (
+        <p className="text-center text-sm text-danger">{message}</p>
+      )}
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-center text-sm text-accent"
+      >
+        ← Back to sign in
+      </button>
+      <p className="text-center text-xs text-muted">
+        Forgot your PIN too? Ask the president or vice president — they can
+        reset either one, or delete the account so you can start fresh.
+      </p>
+    </form>
+  );
+}
+
+/** Reset a forgotten kiosk PIN by proving the account password. */
+function ForgotPin({ onBack }: { onBack: () => void }) {
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "error" | "done">(
+    "idle",
+  );
+  const [message, setMessage] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("sending");
+    setMessage("");
+
+    try {
+      const result = await resetPinWithPassword(name, password, newPin);
+      if ("error" in result) {
+        setStatus("error");
+        setMessage(result.error);
+        return;
+      }
+      setStatus("done");
+    } catch (err) {
+      setStatus("error");
+      setMessage(describeError(err));
+    }
+  }
+
+  if (status === "done") {
+    return (
+      <div className="flex flex-col gap-4 text-center">
+        <div className="rounded-2xl border border-success/40 bg-success/10 px-4 py-4">
+          <div className="text-sm font-bold text-success">New PIN saved 🎉</div>
+          <p className="mt-1 text-sm text-foreground/90">
+            Tap it on the studio&apos;s quick sign-in screen next time
+            you&apos;re in.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-center text-sm text-accent"
+        >
+          ← Back to sign in
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <input
+        type="text"
+        autoComplete="name"
+        required
+        placeholder="Your full name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className={FIELD_CLASS}
+      />
+      <PasswordInput
+        autoComplete="current-password"
+        required
+        placeholder="Your password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        className={FIELD_CLASS}
+      />
+      <PasswordInput
+        inputMode="numeric"
+        autoComplete="off"
+        required
+        pattern="\d{4}"
+        maxLength={4}
+        placeholder="New 4-digit PIN"
+        value={newPin}
+        onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+        className={FIELD_CLASS}
+      />
+      <button
+        type="submit"
+        disabled={status === "sending"}
+        className="rounded-2xl bg-accent px-6 py-4 text-lg font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
+      >
+        {status === "sending" ? "Saving…" : "Save new PIN"}
+      </button>
+      {status === "error" && (
+        <p className="text-center text-sm text-danger">{message}</p>
+      )}
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-center text-sm text-accent"
+      >
+        ← Back to sign in
+      </button>
+      <p className="text-center text-xs text-muted">
+        Forgot your password too? Ask the president or vice president — they
+        can reset either one, or delete the account so you can start fresh.
+      </p>
     </form>
   );
 }
@@ -311,14 +549,13 @@ function OfficerLogin() {
           </button>
         ))}
       </div>
-      <input
-        type="password"
+      <PasswordInput
         autoComplete="current-password"
         required
         placeholder="password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
+        className={FIELD_CLASS}
       />
       <button
         type="submit"

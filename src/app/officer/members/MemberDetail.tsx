@@ -5,10 +5,13 @@ import { canManageMembers, type Role } from "@/lib/roles";
 import { formatStudioDate, monthKey, monthLabel } from "@/lib/studio";
 import type { Absence, ChoreCredit } from "@/lib/types";
 import {
+  deleteMemberAccount,
   grantCredit,
   markAbsence,
   removeAbsence,
+  renameMember,
   resetMemberPassword,
+  resetMemberPin,
   revokeCredit,
   setActive,
 } from "./actions";
@@ -307,9 +310,13 @@ export function MemberDetail({
             </button>
           </div>
 
-          {viewerRole === "president" && member.hasAccount && (
-            <PasswordReset memberId={member.id} />
-          )}
+          <NameEdit memberId={member.id} currentName={member.full_name} />
+
+          {member.hasAccount && <PasswordReset memberId={member.id} />}
+
+          <PinReset memberId={member.id} />
+
+          <DeleteMember memberId={member.id} name={member.full_name} />
         </section>
       )}
 
@@ -321,8 +328,70 @@ export function MemberDetail({
 }
 
 /**
- * President-only forgot-password recovery. Existing passwords can't be
- * viewed (only a hash is stored) — the president sets a fresh one and hands
+ * President/VP: fix a mistyped account name. The member's name-based login
+ * moves with it, so they sign in with the corrected spelling afterwards.
+ */
+function NameEdit({
+  memberId,
+  currentName,
+}: {
+  memberId: string;
+  currentName: string;
+}) {
+  const [name, setName] = useState(currentName);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const dirty = name.trim().replace(/\s+/g, " ") !== currentName;
+
+  const handleSave = () => {
+    startTransition(async () => {
+      const res = await renameMember(memberId, name);
+      if ("error" in res) {
+        setError(res.error);
+        setMessage(null);
+      } else {
+        setError(null);
+        setName(res.name);
+        setMessage(`Renamed to ${res.name}. They now log in with that name.`);
+      }
+    });
+  };
+
+  return (
+    <div>
+      <div className="text-sm font-medium">Account name</div>
+      <p className="mt-0.5 text-xs text-muted">
+        Fix typos or stray spaces — their name-based login updates to match.
+      </p>
+      <div className="mt-2 flex gap-2">
+        <input
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            setMessage(null);
+          }}
+          autoComplete="off"
+          className="min-w-0 flex-1 rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent"
+        />
+        <button
+          onClick={handleSave}
+          disabled={pending || !dirty}
+          className="shrink-0 rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
+        >
+          {pending ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+      {message && <p className="mt-2 text-xs text-success">{message}</p>}
+    </div>
+  );
+}
+
+/**
+ * President/VP forgot-password recovery. Existing passwords can't be
+ * viewed (only a hash is stored) — the officer sets a fresh one and hands
  * it to the member.
  */
 function PasswordReset({ memberId }: { memberId: string }) {
@@ -386,6 +455,127 @@ function PasswordReset({ memberId }: { memberId: string }) {
           : confirming
             ? "Tap again to reset"
             : "Reset password"}
+      </button>
+      {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * President/VP forgot-PIN recovery — mirrors the password reset: a fresh
+ * random 4-digit PIN, shown once, handed over in person.
+ */
+function PinReset({ memberId }: { memberId: string }) {
+  const [confirming, setConfirming] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const handleReset = () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    startTransition(async () => {
+      const res = await resetMemberPin(memberId);
+      if ("error" in res) {
+        setError(res.error);
+      } else {
+        setError(null);
+        setResult(res.pin);
+      }
+    });
+  };
+
+  if (result) {
+    return (
+      <div className="rounded-xl border border-accent/40 bg-accent/10 px-3 py-3">
+        <div className="text-sm font-medium">New studio PIN set</div>
+        <div className="mt-1 select-all font-mono text-lg font-bold tracking-[0.3em]">
+          {result}
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          Give this to the member now — it&apos;s what they tap on the quick
+          sign-in screen.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="text-sm font-medium">Forgot their PIN?</div>
+        <p className="mt-0.5 text-xs text-muted">
+          Resetting shows a new 4-digit PIN to hand over.
+        </p>
+      </div>
+      <button
+        onClick={handleReset}
+        disabled={pending}
+        className={`shrink-0 rounded-xl px-3 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
+          confirming
+            ? "bg-danger text-background"
+            : "border border-border text-muted"
+        }`}
+      >
+        {pending
+          ? "Resetting…"
+          : confirming
+            ? "Tap again to reset"
+            : "Reset PIN"}
+      </button>
+      {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * President/VP: permanently delete a member and their history. The escape
+ * hatch when someone forgot both password and PIN — delete, then they
+ * create a fresh account.
+ */
+function DeleteMember({ memberId, name }: { memberId: string; name: string }) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const handleDelete = () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    startTransition(async () => {
+      const res = await deleteMemberAccount(memberId);
+      if (res?.error) setError(res.error);
+    });
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-danger">Delete account</div>
+        <p className="mt-0.5 text-xs text-muted">
+          Removes {name} and all their history — for good. If they forgot
+          both password and PIN, delete and have them start fresh.
+        </p>
+      </div>
+      <button
+        onClick={handleDelete}
+        disabled={pending}
+        className={`shrink-0 rounded-xl px-3 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
+          confirming
+            ? "bg-danger text-background"
+            : "border border-danger/40 bg-danger/10 text-danger"
+        }`}
+      >
+        {pending
+          ? "Deleting…"
+          : confirming
+            ? "Tap again to delete"
+            : "Delete"}
       </button>
       {error && <p className="text-xs text-danger">{error}</p>}
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { PasswordInput } from "@/components/PasswordInput";
 import { addMember } from "./actions";
 
 /** President/VP-only form for adding a kiosk-only member to the roster. */
@@ -27,15 +28,17 @@ export function AddMemberForm() {
           placeholder="Full name"
           className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
         />
-        <input
-          name="pin"
-          autoComplete="off"
-          inputMode="numeric"
-          pattern="\d{4}"
-          maxLength={4}
-          placeholder="PIN (optional)"
-          className="w-32 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
-        />
+        <div className="w-40">
+          <PasswordInput
+            name="pin"
+            autoComplete="off"
+            inputMode="numeric"
+            pattern="\d{4}"
+            maxLength={4}
+            placeholder="PIN (optional)"
+            className="rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+          />
+        </div>
         <button
           type="submit"
           disabled={pending}

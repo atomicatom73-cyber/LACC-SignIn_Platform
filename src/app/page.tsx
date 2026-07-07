@@ -6,7 +6,7 @@ export default function Home() {
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 py-12">
       <div className="anim-fade w-full max-w-sm">
         <div className="mb-10 flex flex-col items-center text-center">
-          <Logo className="mb-5 h-16 w-16 text-2xl" />
+          <Logo className="mb-5 h-24 w-24" />
           <h1 className="text-3xl font-bold tracking-tight">LACC Studio</h1>
           <p className="mt-2 text-muted">
             Sign in, see your jobs, and keep up with the studio.
@@ -35,6 +35,21 @@ export default function Home() {
               <span className="block text-lg font-semibold">Quick sign in</span>
               <span className="block text-sm text-muted">
                 Tap your name on the studio list
+              </span>
+            </span>
+            <span className="text-2xl text-muted">→</span>
+          </Link>
+
+          <Link
+            href="/calendar"
+            className="flex items-center justify-between rounded-2xl border border-border bg-surface px-6 py-5 transition active:scale-[0.98]"
+          >
+            <span>
+              <span className="block text-lg font-semibold">
+                Studio calendar
+              </span>
+              <span className="block text-sm text-muted">
+                Classes &amp; events — no login needed
               </span>
             </span>
             <span className="text-2xl text-muted">→</span>

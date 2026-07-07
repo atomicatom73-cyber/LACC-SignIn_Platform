@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { formatDuration } from "@/lib/time";
+import { PasswordInput } from "@/components/PasswordInput";
 import { toggleKioskShift } from "./actions";
 
 export type RosterMember = {
@@ -123,21 +124,22 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
                 if (pin.length === 4) run(pinFor, pin);
               }}
             >
-              <input
-                ref={pinInputRef}
-                type="password"
-                inputMode="numeric"
-                pattern="\d{4}"
-                maxLength={4}
-                autoComplete="off"
-                value={pin}
-                onChange={(e) => {
-                  setPin(e.target.value.replace(/\D/g, ""));
-                  setPinError(null);
-                }}
-                placeholder="••••"
-                className="mt-4 w-full rounded-2xl border border-border bg-surface-2 px-5 py-4 text-center text-2xl tracking-[0.5em] outline-none focus:border-accent"
-              />
+              <div className="mt-4">
+                <PasswordInput
+                  ref={pinInputRef}
+                  inputMode="numeric"
+                  pattern="\d{4}"
+                  maxLength={4}
+                  autoComplete="off"
+                  value={pin}
+                  onChange={(e) => {
+                    setPin(e.target.value.replace(/\D/g, ""));
+                    setPinError(null);
+                  }}
+                  placeholder="••••"
+                  className="rounded-2xl border border-border bg-surface-2 px-5 py-4 text-center text-2xl tracking-[0.5em] outline-none focus:border-accent"
+                />
+              </div>
               {pinError && (
                 <p className="mt-2 text-sm text-danger">{pinError}</p>
               )}

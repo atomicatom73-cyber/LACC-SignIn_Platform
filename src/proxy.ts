@@ -3,8 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 /**
  * Refreshes the Supabase auth session and guards the logged-in areas
- * (member dashboard, officer dashboard, studio calendar). The landing page,
- * login, and kiosk stay session-free so they skip the `getUser()` round-trip.
+ * (member dashboard, officer dashboard). The landing page, login, kiosk, and
+ * the studio calendar stay session-free so they skip the `getUser()`
+ * round-trip — the calendar is public and does its own optional-auth check.
  * Server Actions posted to these routes are covered by the same matcher, and
  * each one re-checks auth on its own.
  *
@@ -48,5 +49,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/me/:path*", "/officer/:path*", "/calendar/:path*"],
+  matcher: ["/me/:path*", "/officer/:path*"],
 };
