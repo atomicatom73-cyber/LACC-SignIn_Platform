@@ -15,6 +15,7 @@ const TABS: { href: string; label: string; roles?: Role[] }[] = [
   },
   { href: "/officer/messages", label: "Messages" },
   { href: "/calendar", label: "Calendar" },
+  { href: "/officer/account", label: "Account" },
 ];
 
 export function OfficerNav({ role }: { role: Role }) {

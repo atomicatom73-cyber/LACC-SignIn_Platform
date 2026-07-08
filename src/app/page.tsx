@@ -32,9 +32,11 @@ export default function Home() {
             className="flex items-center justify-between rounded-2xl border border-border bg-surface px-6 py-5 transition active:scale-[0.98]"
           >
             <span>
-              <span className="block text-lg font-semibold">Quick sign in</span>
+              <span className="block text-lg font-semibold">
+                Quick sign in <span className="font-normal">🎓</span>
+              </span>
               <span className="block text-sm text-muted">
-                Tap your name on the studio list
+                Students &amp; members — sign in here at the studio
               </span>
             </span>
             <span className="text-2xl text-muted">→</span>

@@ -30,6 +30,15 @@ alter table public.members drop constraint if exists members_role_check;
 alter table public.members add constraint members_role_check
   check (role in ('member', 'president', 'vice_president', 'volunteer_coordinator'));
 
+-- Officer recovery link: an officer (shared login) may point their account at
+-- their own personal member account, so a forgotten officer password can be
+-- reset by proving that member account's password or PIN. Set on the officer's
+-- member row; null for everyone else. `on delete set null` so deleting the
+-- linked member account simply drops the link.
+alter table public.members
+  add column if not exists recovery_member_id uuid
+    references public.members (id) on delete set null;
+
 -- ---------------------------------------------------------------------------
 -- Shifts (studio sign-in / sign-out)
 -- ---------------------------------------------------------------------------

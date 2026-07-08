@@ -2,7 +2,13 @@
 
 import { createClient as createBareClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { memberLoginEmail } from "@/lib/roles";
+import {
+  isOfficer,
+  memberLoginEmail,
+  OFFICER_ACCOUNTS,
+  OFFICER_ROLES,
+} from "@/lib/roles";
+import { verifyMemberCredential } from "@/lib/member-credentials";
 
 export type RegisterResult = { error: string } | { email: string };
 
@@ -164,4 +170,54 @@ export async function resetPinWithPassword(
   if (error) return { error: error.message };
 
   return { success: true };
+}
+
+/**
+ * Reset a forgotten SHARED officer password by proving the personal member
+ * account the officer linked from their account page (see linkRecoveryMember).
+ * Identity is proven with that member account's password or 4-digit PIN.
+ * Returns the officer login email so the client can sign straight in.
+ */
+export async function resetOfficerPasswordViaMember(
+  role: string,
+  memberName: string,
+  credential: string,
+  newPassword: string,
+): Promise<{ error: string } | { email: string }> {
+  if (!isOfficer(role)) return { error: "Pick a valid officer role." };
+  if (newPassword.length < 8) {
+    return { error: "New password needs at least 8 characters." };
+  }
+
+  // One generic failure whether no member is linked, the name is wrong, or the
+  // credential is wrong — don't reveal which role has a link set up.
+  const genericFail = {
+    error:
+      "That doesn't match the member account linked to this role. If no account is linked, ask whoever holds the role to hand over the password.",
+  };
+
+  const admin = createAdminClient();
+  const { data: officerRow } = await admin
+    .from("members")
+    .select("user_id, recovery_member_id")
+    .eq("role", role)
+    .not("user_id", "is", null)
+    .maybeSingle();
+  if (!officerRow?.user_id || !officerRow.recovery_member_id) {
+    return genericFail;
+  }
+
+  const match = await verifyMemberCredential(memberName, credential);
+  if (!match || match.id !== officerRow.recovery_member_id) {
+    return genericFail;
+  }
+
+  const { error } = await admin.auth.admin.updateUserById(officerRow.user_id, {
+    password: newPassword,
+  });
+  if (error) return { error: error.message };
+
+  return {
+    email: OFFICER_ACCOUNTS[role as (typeof OFFICER_ROLES)[number]],
+  };
 }

@@ -14,6 +14,7 @@ import {
 } from "@/lib/roles";
 import {
   registerMember,
+  resetOfficerPasswordViaMember,
   resetPasswordWithPin,
   resetPinWithPassword,
 } from "./actions";
@@ -495,6 +496,7 @@ function ForgotPin({ onBack }: { onBack: () => void }) {
 
 function OfficerLogin() {
   const router = useRouter();
+  const [recovering, setRecovering] = useState(false);
   const [role, setRole] = useState<(typeof OFFICER_ROLES)[number]>("president");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "error">("idle");
@@ -529,6 +531,16 @@ function OfficerLogin() {
       setStatus("error");
       setMessage(describeError(err));
     }
+  }
+
+  if (recovering) {
+    return (
+      <OfficerRecover
+        role={role}
+        setRole={setRole}
+        onBack={() => setRecovering(false)}
+      />
+    );
   }
 
   return (
@@ -567,9 +579,148 @@ function OfficerLogin() {
       {status === "error" && (
         <p className="text-center text-sm text-danger">{message}</p>
       )}
+      <button
+        type="button"
+        onClick={() => setRecovering(true)}
+        className="text-center text-sm text-muted underline underline-offset-2"
+      >
+        Forgot the password?
+      </button>
       <p className="text-center text-xs text-muted">
         Officer accounts (President, Vice President, Volunteer Coordinator) are
         shared logins handed to whoever holds the role.
+      </p>
+    </form>
+  );
+}
+
+/**
+ * Reset a forgotten officer password by proving the personal member account
+ * an officer linked from their account page (password or studio PIN).
+ */
+function OfficerRecover({
+  role,
+  setRole,
+  onBack,
+}: {
+  role: (typeof OFFICER_ROLES)[number];
+  setRole: (r: (typeof OFFICER_ROLES)[number]) => void;
+  onBack: () => void;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [credential, setCredential] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "error">("idle");
+  const [message, setMessage] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("sending");
+    setMessage("");
+
+    try {
+      const result = await resetOfficerPasswordViaMember(
+        role,
+        name,
+        credential,
+        newPassword,
+      );
+      if ("error" in result) {
+        setStatus("error");
+        setMessage(result.error);
+        return;
+      }
+
+      // Password is set — sign straight in as the officer.
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        email: result.email,
+        password: newPassword,
+      });
+      if (error) {
+        setStatus("error");
+        setMessage(
+          "Password updated! Signing in didn't work though — go back and sign in with the new password.",
+        );
+        return;
+      }
+      router.push("/me");
+      router.refresh();
+    } catch (err) {
+      setStatus("error");
+      setMessage(describeError(err));
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <p className="text-center text-sm text-muted">
+        Reset an officer password using the personal member account linked to
+        the role.
+      </p>
+      <div className="flex flex-col gap-2">
+        {OFFICER_ROLES.map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() => setRole(r)}
+            className={`rounded-2xl border px-5 py-3 text-left text-base transition ${
+              role === r
+                ? "border-accent bg-accent/10 font-semibold"
+                : "border-border bg-surface text-muted"
+            }`}
+          >
+            {ROLE_LABELS[r]}
+          </button>
+        ))}
+      </div>
+      <input
+        type="text"
+        autoComplete="name"
+        required
+        placeholder="Linked member account name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className={FIELD_CLASS}
+      />
+      <PasswordInput
+        autoComplete="off"
+        required
+        placeholder="That account's password or 4-digit PIN"
+        value={credential}
+        onChange={(e) => setCredential(e.target.value)}
+        className={FIELD_CLASS}
+      />
+      <PasswordInput
+        autoComplete="new-password"
+        required
+        minLength={8}
+        placeholder="New officer password (8+ characters)"
+        value={newPassword}
+        onChange={(e) => setNewPassword(e.target.value)}
+        className={FIELD_CLASS}
+      />
+      <button
+        type="submit"
+        disabled={status === "sending"}
+        className="rounded-2xl bg-accent px-6 py-4 text-lg font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
+      >
+        {status === "sending" ? "Resetting…" : "Reset password & sign in"}
+      </button>
+      {status === "error" && (
+        <p className="text-center text-sm text-danger">{message}</p>
+      )}
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-center text-sm text-accent"
+      >
+        ← Back to officer sign in
+      </button>
+      <p className="text-center text-xs text-muted">
+        No member account linked yet? Sign in and link one under the Account tab
+        — or ask whoever holds the role to hand over the password.
       </p>
     </form>
   );
