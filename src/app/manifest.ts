@@ -13,8 +13,13 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#0f1115",
     theme_color: "#0f1115",
     icons: [
-      { src: "/icon", sizes: "64x64", type: "image/png" },
-      { src: "/apple-icon", sizes: "180x180", type: "image/png" },
+      { src: "/icon", sizes: "64x64", type: "image/png", purpose: "any" },
+      { src: "/apple-icon", sizes: "180x180", type: "image/png", purpose: "any" },
+      { src: "/icons/192", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icons/512", sizes: "512x512", type: "image/png", purpose: "any" },
+      // Android launchers prefer a maskable icon; without one they shrink the
+      // "any" icon inside a white rounded square instead of showing the logo.
+      { src: "/icons/maskable", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
   };
 }
