@@ -106,6 +106,19 @@ a {
   touch-action: manipulation;
 }
 
+/* On touch devices, scrollable containers (the officer nav, message lists)
+   otherwise render a persistent gray scrollbar track. Hide the chrome —
+   swipe-to-scroll still works — while keeping real scrollbars on desktop
+   where they aid discoverability. */
+@media (pointer: coarse) {
+  * {
+    scrollbar-width: none; /* Firefox / standards */
+  }
+  *::-webkit-scrollbar {
+    display: none; /* WebKit / Blink */
+  }
+}
+
 /* Announcement banner: intentionally loud so nobody misses studio news. */
 @keyframes announce-glow {
   0%,
