@@ -2,6 +2,7 @@
 
 import { createClient as createBareClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient as createSessionClient } from "@/lib/supabase/server";
 import {
   isOfficer,
   memberLoginEmail,
@@ -11,6 +12,25 @@ import {
 import { verifyMemberCredential } from "@/lib/member-credentials";
 
 export type RegisterResult = { error: string } | { email: string };
+
+/**
+ * Sign in on the server so Supabase writes the auth cookies via the HTTP
+ * Set-Cookie header. Those are durable first-party cookies that survive
+ * closing the app. Signing in with the browser client instead writes the
+ * session through document.cookie, which iOS/WebKit treats as short-lived
+ * under ITP and can drop when a home-screen PWA is closed — silently signing
+ * the person out. Every sign-in path (login, password/PIN reset, officer
+ * recovery) routes through here so the session sticks to the device.
+ */
+export async function signIn(
+  email: string,
+  password: string,
+): Promise<{ error: string } | { ok: true }> {
+  const supabase = await createSessionClient();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) return { error: error.message };
+  return { ok: true };
+}
 
 /**
  * Create a member account from a name + password + kiosk PIN. The synthetic

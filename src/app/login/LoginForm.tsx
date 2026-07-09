@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { Logo } from "@/components/Brand";
 import { PasswordInput } from "@/components/PasswordInput";
 import {
@@ -17,6 +16,7 @@ import {
   resetOfficerPasswordViaMember,
   resetPasswordWithPin,
   resetPinWithPassword,
+  signIn,
 } from "./actions";
 
 type Mode = "member" | "officer";
@@ -163,19 +163,16 @@ function MemberLogin({
         return;
       }
 
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        // Name-based login: the address is synthetic, derived from the name.
-        email,
-        password,
-      });
-
-      if (error) {
+      // Name-based login: the address is synthetic, derived from the name.
+      // Sign in on the server so the session cookie persists after the app is
+      // closed (see signIn).
+      const signInResult = await signIn(email, password);
+      if ("error" in signInResult) {
         setStatus("error");
         setMessage(
-          error.message === "Invalid login credentials"
+          signInResult.error === "Invalid login credentials"
             ? "No account matches that name and password. Check the spelling — or create an account below."
-            : error.message,
+            : signInResult.error,
         );
         return;
       }
@@ -313,12 +310,8 @@ function ForgotPassword({ onBack }: { onBack: () => void }) {
       }
 
       // Password is set — sign straight in with it.
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email: result.email,
-        password: newPassword,
-      });
-      if (error) {
+      const signInResult = await signIn(result.email, newPassword);
+      if ("error" in signInResult) {
         setStatus("error");
         setMessage(
           "Password updated! Signing in didn't work though — go back and sign in with your new password.",
@@ -508,19 +501,14 @@ function OfficerLogin() {
     setMessage("");
 
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        // Shared officer logins are name-based; the address is synthetic.
-        email: OFFICER_ACCOUNTS[role],
-        password,
-      });
-
-      if (error) {
+      // Shared officer logins are name-based; the address is synthetic.
+      const signInResult = await signIn(OFFICER_ACCOUNTS[role], password);
+      if ("error" in signInResult) {
         setStatus("error");
         setMessage(
-          error.message === "Invalid login credentials"
+          signInResult.error === "Invalid login credentials"
             ? "Wrong password for that role."
-            : error.message,
+            : signInResult.error,
         );
         return;
       }
@@ -633,12 +621,8 @@ function OfficerRecover({
       }
 
       // Password is set — sign straight in as the officer.
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email: result.email,
-        password: newPassword,
-      });
-      if (error) {
+      const signInResult = await signIn(result.email, newPassword);
+      if ("error" in signInResult) {
         setStatus("error");
         setMessage(
           "Password updated! Signing in didn't work though — go back and sign in with the new password.",
