@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { SessionKeeper } from "@/components/SessionKeeper";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -47,7 +48,10 @@ export default function RootLayout({
       {/* Plain block, not a flex column: a viewport-height flex body squashes
           page shells whose min-h-dvh overrides their automatic minimum size
           (clipped navs, broken sticky). Pages manage their own height. */}
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full">
+        <SessionKeeper />
+        {children}
+      </body>
     </html>
   );
 }

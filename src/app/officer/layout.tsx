@@ -1,6 +1,7 @@
 import { requireOfficer } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/roles";
 import { Wordmark } from "@/components/Brand";
+import { LogoutButton } from "@/components/LogoutButton";
 import { signOutAuth } from "@/app/me/actions";
 import { OfficerNav } from "./OfficerNav";
 
@@ -20,7 +21,7 @@ export default async function OfficerLayout({
             {ROLE_LABELS[member.role]}
           </span>
           <form action={signOutAuth}>
-            <button className="text-sm text-muted">Log out</button>
+            <LogoutButton />
           </form>
         </div>
       </header>

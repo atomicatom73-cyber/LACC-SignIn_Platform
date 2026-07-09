@@ -18,6 +18,7 @@ import {
 } from "@/lib/time";
 import { Wordmark } from "@/components/Brand";
 import { AnnouncementsBanner } from "@/components/AnnouncementsBanner";
+import { LogoutButton } from "@/components/LogoutButton";
 import { ClockCard } from "./ClockCard";
 import { ChoresCard, type MyChore } from "./ChoresCard";
 import { ProfileSetup } from "./ProfileSetup";
@@ -123,7 +124,7 @@ export default async function MePage() {
       <header className="flex items-center justify-between">
         <Wordmark />
         <form action={signOutAuth}>
-          <button className="text-sm text-muted">Log out</button>
+          <LogoutButton />
         </form>
       </header>
 
