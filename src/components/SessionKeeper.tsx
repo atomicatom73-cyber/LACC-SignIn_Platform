@@ -17,8 +17,9 @@ import {
  *     periodic token refresh, so the stored refresh token stays current), and
  *     drop it on sign-out so a deliberate logout is never resurrected.
  *  2. On launch, if the cookie session was wiped but a backup survives, restore
- *     it — which re-writes the auth cookie — then refresh so the server-rendered
- *     pages pick the session back up.
+ *     it — which re-writes the auth cookie — then land the member on their
+ *     account page (replacing the start-page history entry) or, if they opened a
+ *     deeper link, refresh in place so the server-rendered pages pick it back up.
  *
  * Renders nothing. A no-op on platforms where the cookie already persists.
  */
@@ -49,7 +50,16 @@ export function SessionKeeper() {
         clearSessionBackup(); // Refresh token expired/revoked — real logout.
         return;
       }
-      router.refresh();
+
+      // A cold launch always starts at the manifest start_url ("/"), the public
+      // hub. Now that the session is back, send the member to their account
+      // page — and REPLACE the entry, so the landing page isn't left behind for
+      // the iOS back-swipe to return to. (/me routes officers on to /officer.)
+      // Anywhere else — a public deep link like /calendar — just re-render in
+      // place so we don't yank them off the page they opened.
+      const path = window.location.pathname;
+      if (path === "/" || path === "/login") router.replace("/me");
+      else router.refresh();
     })();
 
     return () => sub.subscription.unsubscribe();

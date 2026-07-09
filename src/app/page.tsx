@@ -1,7 +1,21 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 import { Logo } from "@/components/Brand";
 
-export default function Home() {
+export default async function Home() {
+  // Signed-in members belong on their account page, not this public hub. This
+  // makes a home-screen PWA reopen on the account page after a cold close, and
+  // keeps the iOS back-swipe from stranding them on the start screen: reaching
+  // `/` while signed in just bounces straight back to /me. Logged-out visitors
+  // and the kiosk iPad (no member session) still get the hub; /me routes
+  // officers on to /officer. Mirrors the same guard on /login.
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (user) redirect("/me");
+
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 py-12">
       <div className="anim-fade w-full max-w-sm">
