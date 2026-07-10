@@ -98,3 +98,12 @@ export type MessageRecipient = {
   member_id: string;
   read_at: string | null;
 };
+
+export type DoorCode = {
+  id: string;
+  title: string;
+  code: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};

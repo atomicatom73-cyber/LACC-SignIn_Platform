@@ -72,3 +72,8 @@ export function canManageChores(role: string | null | undefined): boolean {
 export function canSendMessages(role: string | null | undefined): boolean {
   return isOfficer(role);
 }
+
+/** Add/edit/delete studio door codes. Every officer can view them. */
+export function canManageDoorCodes(role: string | null | undefined): boolean {
+  return role === "president" || role === "vice_president";
+}

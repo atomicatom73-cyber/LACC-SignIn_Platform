@@ -14,6 +14,7 @@ const TABS: { href: string; label: string; roles?: Role[] }[] = [
     roles: ["president", "vice_president"],
   },
   { href: "/officer/messages", label: "Messages" },
+  { href: "/officer/door-codes", label: "Door codes" },
   { href: "/calendar", label: "Calendar" },
   { href: "/officer/account", label: "Account" },
 ];

@@ -35,7 +35,7 @@ export default async function MePage() {
 
   const { data: member } = await supabase
     .from("members")
-    .select("id, full_name, role")
+    .select("id, full_name, role, active")
     .eq("user_id", user.id)
     .single();
 
@@ -200,6 +200,25 @@ export default async function MePage() {
           <div className="mt-1 text-lg font-bold">📅 Calendar</div>
         </Link>
       </div>
+
+      {member.active && (
+        <div className="mt-4">
+          <Link
+            href="/me/door-codes"
+            className="flex items-center justify-between rounded-2xl border border-border bg-surface px-4 py-4 transition active:scale-[0.98]"
+          >
+            <div>
+              <div className="text-xs uppercase tracking-wide text-muted">
+                Studio access
+              </div>
+              <div className="mt-1 text-lg font-bold">🔑 Door codes</div>
+            </div>
+            <span className="text-xl text-muted" aria-hidden>
+              →
+            </span>
+          </Link>
+        </div>
+      )}
 
       {events.length > 0 && (
         <section className="mt-6">

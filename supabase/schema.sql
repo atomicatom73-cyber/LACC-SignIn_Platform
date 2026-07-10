@@ -216,6 +216,24 @@ create index if not exists message_recipients_member_idx
   on public.message_recipients (member_id, read_at);
 
 -- ---------------------------------------------------------------------------
+-- Door codes
+-- ---------------------------------------------------------------------------
+
+-- Studio door/lock access codes. President/VP maintain the list; every active
+-- member can read them, so deactivated members immediately lose access to the
+-- codes (RLS below). `title` names the door or lock, `code` is the combination.
+create table if not exists public.door_codes (
+  id         uuid primary key default gen_random_uuid(),
+  title      text not null,
+  code       text not null,
+  created_by uuid references public.members (id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists door_codes_created_idx on public.door_codes (created_at);
+
+-- ---------------------------------------------------------------------------
 -- Helper functions (security definer so RLS policies can consult members
 -- without recursing into members' own policies)
 -- ---------------------------------------------------------------------------
@@ -390,6 +408,7 @@ alter table public.absences           enable row level security;
 alter table public.events             enable row level security;
 alter table public.messages           enable row level security;
 alter table public.message_recipients enable row level security;
+alter table public.door_codes         enable row level security;
 
 -- members ---------------------------------------------------------------
 
@@ -564,6 +583,27 @@ drop policy if exists "recipients delete officers" on public.message_recipients;
 create policy "recipients delete officers"
   on public.message_recipients for delete
   using (public.is_officer());
+
+-- door_codes ----------------------------------------------------------------
+-- Read: any officer, or any *active* member (deactivated members are excluded,
+-- so losing active status immediately hides the codes). Manage: president/VP.
+
+drop policy if exists "door codes read active members" on public.door_codes;
+create policy "door codes read active members"
+  on public.door_codes for select
+  using (
+    public.is_officer()
+    or exists (
+      select 1 from public.members m
+      where m.user_id = auth.uid() and m.active
+    )
+  );
+
+drop policy if exists "door codes manage admins" on public.door_codes;
+create policy "door codes manage admins"
+  on public.door_codes for all
+  using (public.my_role() in ('president', 'vice_president'))
+  with check (public.my_role() in ('president', 'vice_president'));
 
 -- ---------------------------------------------------------------------------
 -- Seed: the studio's standing chore catalog (edit freely in the app)
