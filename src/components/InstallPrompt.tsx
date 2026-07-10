@@ -25,7 +25,9 @@ type InstallEvent = Event & {
 };
 
 const DISMISS_KEY = "lacc-install-dismissed";
-const ALLOWED_ROUTES = ["/login", "/me"];
+// The public hub (/) is where you land when you first open the URL, so the
+// prompt needs to be there too — plus the sign-in and account screens.
+const ALLOWED_ROUTES = ["/", "/login", "/me"];
 
 export function InstallPrompt() {
   const pathname = usePathname();
