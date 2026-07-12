@@ -5,22 +5,24 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Logo } from "@/components/Brand";
 import { PasswordInput } from "@/components/PasswordInput";
-import {
-  OFFICER_ACCOUNTS,
-  OFFICER_ROLES,
-  ROLE_LABELS,
-  memberLoginEmail,
-} from "@/lib/roles";
+import { OFFICER_ACCOUNTS, OFFICER_ROLES, ROLE_LABELS } from "@/lib/roles";
 import {
   registerMember,
   resetOfficerPasswordViaMember,
   resetPasswordWithPin,
   resetPinWithPassword,
+  sendPasswordResetEmail,
   signIn,
+  signInMember,
 } from "./actions";
 
 type Mode = "member" | "officer";
-type MemberView = "signin" | "create" | "forgot-password" | "forgot-pin";
+type MemberView =
+  | "signin"
+  | "create"
+  | "forgot-password"
+  | "forgot-pin"
+  | "forgot-password-email";
 
 /**
  * Turn any thrown value into a message the person at the studio can act on.
@@ -48,6 +50,10 @@ const HEADINGS: Record<MemberView, { title: string; blurb: string }> = {
   "forgot-pin": {
     title: "Reset your PIN",
     blurb: "Prove it's you with your password, then pick a new 4-digit PIN.",
+  },
+  "forgot-password-email": {
+    title: "Reset your password",
+    blurb: "Enter the email on your account and we'll send you a reset link.",
   },
 };
 
@@ -107,6 +113,8 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
             <ForgotPassword onBack={() => setView("signin")} />
           ) : view === "forgot-pin" ? (
             <ForgotPin onBack={() => setView("signin")} />
+          ) : view === "forgot-password-email" ? (
+            <ForgotPasswordEmail onBack={() => setView("signin")} />
           ) : (
             <MemberLogin
               initialError={initialError}
@@ -145,7 +153,7 @@ function MemberLogin({
     setMessage("");
 
     try {
-      let email = memberLoginEmail(name);
+      let signInResult: { error: string } | { ok: true };
 
       if (creating) {
         const result = await registerMember(name, password, pin);
@@ -154,24 +162,20 @@ function MemberLogin({
           setMessage(result.error);
           return;
         }
-        email = result.email;
+        // New accounts sign in with their freshly minted synthetic address.
+        signInResult = await signIn(result.email, password);
+      } else {
+        // Sign in by name (synthetic address) OR by a real email the member
+        // has added to their account — signInMember resolves either. Runs
+        // server-side so the cookie persists after the app is closed.
+        signInResult = await signInMember(name, password);
       }
 
-      if (!email) {
-        setStatus("error");
-        setMessage("Please use letters or numbers in your name.");
-        return;
-      }
-
-      // Name-based login: the address is synthetic, derived from the name.
-      // Sign in on the server so the session cookie persists after the app is
-      // closed (see signIn).
-      const signInResult = await signIn(email, password);
       if ("error" in signInResult) {
         setStatus("error");
         setMessage(
           signInResult.error === "Invalid login credentials"
-            ? "No account matches that name and password. Check the spelling — or create an account below."
+            ? "No account matches that name/email and password. Check the spelling — or create an account below."
             : signInResult.error,
         );
         return;
@@ -201,9 +205,9 @@ function MemberLogin({
       )}
       <input
         type="text"
-        autoComplete="name"
+        autoComplete={creating ? "name" : "username"}
         required
-        placeholder="Your full name"
+        placeholder={creating ? "Your full name" : "Your name or email"}
         value={name}
         onChange={(e) => setName(e.target.value)}
         className={FIELD_CLASS}
@@ -266,20 +270,29 @@ function MemberLogin({
           studio knows you by.
         </p>
       ) : (
-        <div className="flex items-center justify-center gap-4 text-sm">
+        <div className="flex flex-col items-center gap-2 text-sm">
+          <div className="flex items-center justify-center gap-4">
+            <button
+              type="button"
+              onClick={() => setView("forgot-password")}
+              className="text-muted underline underline-offset-2"
+            >
+              Forgot password?
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("forgot-pin")}
+              className="text-muted underline underline-offset-2"
+            >
+              Forgot PIN?
+            </button>
+          </div>
           <button
             type="button"
-            onClick={() => setView("forgot-password")}
+            onClick={() => setView("forgot-password-email")}
             className="text-muted underline underline-offset-2"
           >
-            Forgot password?
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("forgot-pin")}
-            className="text-muted underline underline-offset-2"
-          >
-            Forgot PIN?
+            Have an email on file? Get a reset link
           </button>
         </div>
       )}
@@ -482,6 +495,92 @@ function ForgotPin({ onBack }: { onBack: () => void }) {
       <p className="text-center text-xs text-muted">
         Forgot your password too? Ask the president or vice president — they
         can reset either one, or delete the account so you can start fresh.
+      </p>
+    </form>
+  );
+}
+
+/**
+ * Request a password-reset link by email — additive to the PIN-based reset for
+ * members who've added an email. Always shows the same "check your email"
+ * confirmation whether or not the address is on file (no probing which emails
+ * exist); the server only actually sends when it matches an account.
+ */
+function ForgotPasswordEmail({ onBack }: { onBack: () => void }) {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "error" | "done">(
+    "idle",
+  );
+  const [message, setMessage] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("sending");
+    setMessage("");
+
+    try {
+      await sendPasswordResetEmail(email);
+      setStatus("done");
+    } catch (err) {
+      setStatus("error");
+      setMessage(describeError(err));
+    }
+  }
+
+  if (status === "done") {
+    return (
+      <div className="flex flex-col gap-4 text-center">
+        <div className="rounded-2xl border border-success/40 bg-success/10 px-4 py-4">
+          <div className="text-sm font-bold text-success">
+            Check your email 📬
+          </div>
+          <p className="mt-1 text-sm text-foreground/90">
+            If <span className="font-medium">{email}</span> is on a LACC
+            account, a reset link is on its way. It expires in about an hour.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-center text-sm text-accent"
+        >
+          ← Back to sign in
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <input
+        type="email"
+        autoComplete="email"
+        required
+        placeholder="The email on your account"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        className={FIELD_CLASS}
+      />
+      <button
+        type="submit"
+        disabled={status === "sending"}
+        className="rounded-2xl bg-accent px-6 py-4 text-lg font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
+      >
+        {status === "sending" ? "Sending…" : "Email me a reset link"}
+      </button>
+      {status === "error" && (
+        <p className="text-center text-sm text-danger">{message}</p>
+      )}
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-center text-sm text-accent"
+      >
+        ← Back to sign in
+      </button>
+      <p className="text-center text-xs text-muted">
+        No email on file? Use “Forgot password?” to reset with your studio PIN
+        instead.
       </p>
     </form>
   );

@@ -10,6 +10,7 @@ import {
   OFFICER_ROLES,
 } from "@/lib/roles";
 import { verifyMemberCredential } from "@/lib/member-credentials";
+import { renderResetEmail, sendEmail, siteUrl } from "@/lib/email";
 
 export type RegisterResult = { error: string } | { email: string };
 
@@ -30,6 +31,50 @@ export async function signIn(
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: error.message };
   return { ok: true };
+}
+
+/**
+ * Member sign-in by EITHER their name (the classic synthetic-address login) OR
+ * a real email they've added to their account. An email is resolved back to the
+ * account's actual login address — the real email is only an alias stored on
+ * the member row, so name/PIN sign-in is unaffected. Falls through to treating
+ * the typed value as a literal login email if no alias matches, so nothing
+ * regresses. Signs in server-side (see signIn) so the cookie is durable.
+ */
+export async function signInMember(
+  identifierRaw: string,
+  password: string,
+): Promise<{ error: string } | { ok: true }> {
+  const identifier = identifierRaw.trim();
+  if (!identifier) return { error: "Enter your name or email." };
+
+  let loginEmail: string | null;
+  if (identifier.includes("@")) {
+    loginEmail = (await loginEmailForAlias(identifier)) ?? identifier.toLowerCase();
+  } else {
+    loginEmail = memberLoginEmail(identifier);
+  }
+  if (!loginEmail) return { error: "Enter your name or email." };
+
+  return signIn(loginEmail, password);
+}
+
+/**
+ * Given a real email alias, return the account's actual (synthetic) login
+ * address, or null if no member has claimed that alias. Service-role lookup.
+ */
+async function loginEmailForAlias(aliasEmail: string): Promise<string | null> {
+  const admin = createAdminClient();
+  const { data: member } = await admin
+    .from("members")
+    .select("user_id")
+    .ilike("email", aliasEmail)
+    .not("user_id", "is", null)
+    .maybeSingle();
+  if (!member?.user_id) return null;
+
+  const { data } = await admin.auth.admin.getUserById(member.user_id);
+  return data?.user?.email ?? null;
 }
 
 /**
@@ -240,4 +285,73 @@ export async function resetOfficerPasswordViaMember(
   return {
     email: OFFICER_ACCOUNTS[role as (typeof OFFICER_ROLES)[number]],
   };
+}
+
+/**
+ * Self-service "email me a reset link". Additive to the PIN-based reset — a
+ * member who's added their email can get a one-click recovery link instead.
+ *
+ * Always resolves to { ok: true } regardless of whether the email is on file,
+ * so this can't be used to probe which addresses are registered. The recovery
+ * token is generated for the account's real login address, but the email is
+ * delivered to the member's chosen alias; the link lands on /auth/confirm,
+ * which verifies it and forwards to /reset-password.
+ */
+export async function sendPasswordResetEmail(
+  emailRaw: string,
+): Promise<{ ok: true }> {
+  const email = emailRaw.trim().toLowerCase();
+  if (!email.includes("@")) return { ok: true };
+
+  const loginEmail = (await loginEmailForAlias(email)) ?? email;
+
+  const admin = createAdminClient();
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: "recovery",
+    email: loginEmail,
+  });
+  const tokenHash = data?.properties?.hashed_token;
+  if (error || !tokenHash) return { ok: true };
+
+  const link = `${siteUrl()}/auth/confirm?token_hash=${encodeURIComponent(
+    tokenHash,
+  )}&type=recovery&next=${encodeURIComponent("/reset-password")}`;
+
+  await sendEmail({
+    to: email,
+    subject: "Reset your LACC Studio password",
+    text: `Someone asked to reset the password for your LACC Studio account.\n\nReset it here (the link expires in about an hour and can be used once):\n${link}\n\nIf this wasn't you, you can ignore this email — your password won't change.\n`,
+    html: renderResetEmail({ link }),
+  });
+
+  return { ok: true };
+}
+
+/**
+ * Set a new password for the session opened by a recovery link. The /auth/confirm
+ * route verifies the emailed token and starts a short-lived recovery session;
+ * this runs on the /reset-password page inside that session and updates the
+ * password on the session-bound client so the cookies refresh in place.
+ */
+export async function setNewPassword(
+  newPassword: string,
+): Promise<{ error: string } | { ok: true }> {
+  if (newPassword.length < 8) {
+    return { error: "New password needs at least 8 characters." };
+  }
+
+  const supabase = await createSessionClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return {
+      error:
+        "That reset link expired or was already used. Request a new one from the sign-in screen.",
+    };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) return { error: error.message };
+  return { ok: true };
 }

@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { renderAnnouncementEmail, sendEmail, siteUrl } from "@/lib/email";
 
 export type SendMessageState = { error?: string; success?: string } | null;
 
@@ -84,10 +86,56 @@ export async function sendMessage(
     return { error: `Couldn't add recipients: ${recipientsError.message}` };
   }
 
+  // Email the announcement to recipients who have an address on file and
+  // haven't opted out. Best-effort and non-blocking to the outcome: a mail
+  // hiccup (or missing Resend key) must never fail a sent announcement. Uses
+  // the admin client so the lookup doesn't depend on the officer's RLS view.
+  await notifyByEmail(recipientIds, subject, body);
+
   revalidatePath("/officer/messages");
   return {
     success: `Sent to ${recipientIds.length} member${
       recipientIds.length === 1 ? "" : "s"
     }.`,
   };
+}
+
+async function notifyByEmail(
+  recipientIds: string[],
+  subject: string,
+  body: string,
+): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("members")
+      .select("full_name, email")
+      .in("id", recipientIds)
+      .eq("notify_by_email", true)
+      .not("email", "is", null);
+
+    const targets = (data ?? []).filter(
+      (m): m is { full_name: string; email: string } => Boolean(m.email),
+    );
+    if (targets.length === 0) return;
+
+    const url = `${siteUrl()}/me/inbox`;
+    await Promise.allSettled(
+      targets.map((m) =>
+        sendEmail({
+          to: m.email,
+          subject: `New announcement: ${subject}`,
+          text: `Hi ${m.full_name.split(" ")[0] || m.full_name},\n\nYou have a new announcement from the LACC officers:\n\n${subject}\n\n${body}\n\nOpen your inbox: ${url}\n`,
+          html: renderAnnouncementEmail({
+            name: m.full_name,
+            subject,
+            body,
+            url,
+          }),
+        }),
+      ),
+    );
+  } catch (err) {
+    console.error("[messages] email notification step failed:", err);
+  }
 }

@@ -39,6 +39,22 @@ alter table public.members
   add column if not exists recovery_member_id uuid
     references public.members (id) on delete set null;
 
+-- Real email (optional, additive). Lets a member sign in and recover their
+-- password with their own address, and get an email when a new announcement
+-- lands in their inbox. Stored as an ALIAS alongside the synthetic
+-- @member.lacc.local login identity — sign-in and reset resolve this back to
+-- the existing account, so name + PIN sign-in keeps working untouched.
+-- `notify_by_email` is an opt-out; only members with an email on file are ever
+-- emailed. Until laccsignin.com is verified in Resend, mail only reaches the
+-- Resend account owner's own inbox (fine for the pre-domain demo).
+alter table public.members
+  add column if not exists email text;
+alter table public.members
+  add column if not exists notify_by_email boolean not null default true;
+create unique index if not exists members_email_key
+  on public.members (lower(email))
+  where email is not null;
+
 -- ---------------------------------------------------------------------------
 -- Shifts (studio sign-in / sign-out)
 -- ---------------------------------------------------------------------------
