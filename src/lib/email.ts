@@ -71,10 +71,17 @@ export async function sendEmail(args: SendArgs): Promise<SendResult> {
   }
 }
 
-/** Absolute base URL for links inside emails (no trailing slash). */
+/** Absolute base URL for links inside emails — origin only. */
 export function siteUrl(): string {
   const raw = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
-  return raw.replace(/\/+$/, "");
+  // Collapse to the origin so a NEXT_PUBLIC_SITE_URL that carries a stray path
+  // (e.g. copied from the browser while on /officer) can't prefix — and 404 —
+  // every emailed link.
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return raw.replace(/\/+$/, "");
+  }
 }
 
 /** Escape user-supplied text before dropping it into email HTML. */
