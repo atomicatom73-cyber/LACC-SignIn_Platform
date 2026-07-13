@@ -220,6 +220,23 @@ export default async function MePage() {
         </div>
       )}
 
+      <div className="mt-4">
+        <Link
+          href="/me/account"
+          className="flex items-center justify-between rounded-2xl border border-border bg-surface px-4 py-4 transition active:scale-[0.98]"
+        >
+          <div>
+            <div className="text-xs uppercase tracking-wide text-muted">
+              Your profile
+            </div>
+            <div className="mt-1 text-lg font-bold">⚙️ Account</div>
+          </div>
+          <span className="text-xl text-muted" aria-hidden>
+            →
+          </span>
+        </Link>
+      </div>
+
       {events.length > 0 && (
         <section className="mt-6">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">

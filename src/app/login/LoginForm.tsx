@@ -41,7 +41,7 @@ const HEADINGS: Record<MemberView, { title: string; blurb: string }> = {
   signin: { title: "Welcome back", blurb: "Just your name and password." },
   create: {
     title: "Welcome",
-    blurb: "Pick a name, password, and studio PIN — no email needed.",
+    blurb: "Set up your name, email, password, and a studio PIN.",
   },
   "forgot-password": {
     title: "Reset your password",
@@ -140,6 +140,7 @@ function MemberLogin({
   const router = useRouter();
   const creating = view === "create";
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pin, setPin] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "error">(
@@ -156,7 +157,7 @@ function MemberLogin({
       let signInResult: { error: string } | { ok: true };
 
       if (creating) {
-        const result = await registerMember(name, password, pin);
+        const result = await registerMember(name, password, pin, email);
         if ("error" in result) {
           setStatus("error");
           setMessage(result.error);
@@ -212,6 +213,17 @@ function MemberLogin({
         onChange={(e) => setName(e.target.value)}
         className={FIELD_CLASS}
       />
+      {creating && (
+        <input
+          type="email"
+          autoComplete="email"
+          required
+          placeholder="Your email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className={FIELD_CLASS}
+        />
+      )}
       <PasswordInput
         autoComplete={creating ? "new-password" : "current-password"}
         required
@@ -266,8 +278,8 @@ function MemberLogin({
       </button>
       {creating ? (
         <p className="text-center text-xs text-muted">
-          No email needed — your name is your login. Use the same name the
-          studio knows you by.
+          Use the same name the studio knows you by. Your email is for password
+          recovery and announcement alerts — you can also sign in with it.
         </p>
       ) : (
         <div className="flex flex-col items-center gap-2 text-sm">

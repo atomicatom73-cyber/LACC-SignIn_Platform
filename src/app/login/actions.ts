@@ -14,6 +14,11 @@ import { renderResetEmail, sendEmail, siteUrl } from "@/lib/email";
 
 export type RegisterResult = { error: string } | { email: string };
 
+/** Loose email shape check — good enough to catch typos before we store it. */
+function isEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 /**
  * Sign in on the server so Supabase writes the auth cookies via the HTTP
  * Set-Cookie header. Those are durable first-party cookies that survive
@@ -88,13 +93,16 @@ export async function registerMember(
   fullNameRaw: string,
   password: string,
   pin: string,
+  emailRaw: string,
 ): Promise<RegisterResult> {
   const fullName = fullNameRaw.trim().replace(/\s+/g, " ");
   if (fullName.length < 2) return { error: "Enter your full name." };
   if (fullName.length > 80) return { error: "That name is too long." };
 
-  const email = memberLoginEmail(fullName);
-  if (!email) return { error: "Please use letters or numbers in your name." };
+  const loginEmail = memberLoginEmail(fullName);
+  if (!loginEmail) {
+    return { error: "Please use letters or numbers in your name." };
+  }
 
   if (password.length < 8) {
     return { error: "Password needs at least 8 characters." };
@@ -102,10 +110,28 @@ export async function registerMember(
   if (!/^\d{4}$/.test(pin)) {
     return { error: "Pick a 4-digit PIN for the studio sign-in screen." };
   }
+  const contactEmail = emailRaw.trim().toLowerCase();
+  if (!isEmail(contactEmail)) {
+    return { error: "Enter a valid email address." };
+  }
 
   const supabase = createAdminClient();
+
+  // Reject a duplicate email up front so we don't create an orphan login.
+  const { data: emailTaken } = await supabase
+    .from("members")
+    .select("id")
+    .ilike("email", contactEmail)
+    .maybeSingle();
+  if (emailTaken) {
+    return {
+      error:
+        "That email is already on an account. Log in instead, or use a different email.",
+    };
+  }
+
   const { data: created, error } = await supabase.auth.admin.createUser({
-    email,
+    email: loginEmail,
     password,
     email_confirm: true,
     user_metadata: { full_name: fullName },
@@ -122,17 +148,18 @@ export async function registerMember(
   }
 
   // The handle_new_user trigger has already made the member row; stamp the
-  // kiosk PIN on it.
-  const { error: pinError } = await supabase
+  // kiosk PIN and the real email (login alias / recovery / notifications) on it.
+  const { error: profileError } = await supabase
     .from("members")
-    .update({ pin })
+    .update({ pin, email: contactEmail })
     .eq("user_id", created.user.id);
-  if (pinError) {
-    // The account still works — the kiosk just won't ask for a PIN yet.
-    console.error("Failed to save kiosk PIN:", pinError.message);
+  if (profileError) {
+    // The login still works — worst case the PIN/email just aren't saved yet
+    // and they can add them from the account page.
+    console.error("Failed to save PIN/email:", profileError.message);
   }
 
-  return { email };
+  return { email: loginEmail };
 }
 
 /**
