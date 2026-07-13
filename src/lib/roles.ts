@@ -58,11 +58,6 @@ export function canManageMembers(role: string | null | undefined): boolean {
   return role === "president" || role === "vice_president";
 }
 
-/** Create/edit/delete studio calendar events. */
-export function canManageCalendar(role: string | null | undefined): boolean {
-  return role === "president" || role === "vice_president";
-}
-
 /** Chore catalog, assignments, credits, and absences. */
 export function canManageChores(role: string | null | undefined): boolean {
   return isOfficer(role);

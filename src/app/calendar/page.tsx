@@ -2,7 +2,7 @@ import Link from "next/link";
 import Form from "next/form";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { canManageCalendar, isOfficer } from "@/lib/roles";
+import { isOfficer } from "@/lib/roles";
 import {
   addMonths,
   dayLabel,
@@ -12,16 +12,16 @@ import {
   studioToUtcIso,
 } from "@/lib/studio";
 import { occurrencesByDay } from "@/lib/events";
+import { syncGoogleCalendarThrottled } from "@/lib/google-calendar";
 import type { StudioEvent } from "@/lib/types";
 import { Wordmark } from "@/components/Brand";
 import { MonthGrid, type DayMarker } from "@/components/MonthGrid";
-import { AddEvent } from "./AddEvent";
 import { EventCard } from "./EventCard";
 
 export const dynamic = "force-dynamic";
 
 const EVENT_COLUMNS =
-  "id, title, description, category, location, starts_at, ends_at, recurrence, created_by, created_at";
+  "id, title, description, category, location, starts_at, ends_at, recurrence, all_day, source, google_event_id, created_by, created_at";
 
 /** "2026-07-14" → "Mon 14" for the agenda rail. */
 function shortDay(key: string): string {
@@ -76,19 +76,28 @@ export default async function CalendarPage({
   // would let through — read them with the server-side service role.
   const admin = createAdminClient();
 
+  // Keep the calendar live: pull the latest from Google whenever someone opens
+  // the page (throttled to one fetch per minute). This is the primary sync — a
+  // failure must never break the page, so swallow and render whatever is stored.
+  try {
+    await syncGoogleCalendarThrottled();
+  } catch (error) {
+    console.error("[calendar] on-demand sync failed", error);
+  }
+
   // Events that can put an occurrence in this month: anything recurring that
-  // started before month end, plus one-offs starting inside the month.
+  // started before month end, one-offs starting inside the month, and multi-day
+  // all-day spans (e.g. camps) that started earlier but end inside it.
   const startUtc = studioToUtcIso(`${ym}-01`, "00:00");
   const endUtc = studioToUtcIso(`${addMonths(month, 1).slice(0, 7)}-01`, "00:00");
   const { data } = await admin
     .from("events")
     .select(EVENT_COLUMNS)
     .lt("starts_at", endUtc)
-    .or(`recurrence.neq.none,starts_at.gte.${startUtc}`)
+    .or(`recurrence.neq.none,starts_at.gte.${startUtc},ends_at.gte.${startUtc}`)
     .order("starts_at", { ascending: true });
 
   const events: StudioEvent[] = data ?? [];
-  const canManage = canManageCalendar(role);
   const backHref = role === null ? "/" : isOfficer(role) ? "/officer" : "/me";
 
   // Search spans ALL events (any month), not just the visible one.
@@ -180,7 +189,7 @@ export default async function CalendarPage({
             <ul className="flex flex-col gap-3">
               {results.map((event) => (
                 <li key={event.id}>
-                  <EventCard event={event} canManage={canManage} />
+                  <EventCard event={event} />
                 </li>
               ))}
             </ul>
@@ -199,12 +208,6 @@ export default async function CalendarPage({
             />
           </div>
 
-          {canManage && (
-            <div className="mt-5">
-              <AddEvent />
-            </div>
-          )}
-
           <section className="mt-6">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
               {dayLabel(selectedDay)}
@@ -221,11 +224,7 @@ export default async function CalendarPage({
               <ul className="flex flex-col gap-3">
                 {dayOccurrences.map((occ) => (
                   <li key={`${occ.event.id}-${occ.dayKey}`}>
-                    <EventCard
-                      event={occ.event}
-                      occursAtIso={occ.startsAtIso}
-                      canManage={canManage}
-                    />
+                    <EventCard event={occ.event} occursAtIso={occ.startsAtIso} />
                   </li>
                 ))}
               </ul>
@@ -237,9 +236,7 @@ export default async function CalendarPage({
               This month at a glance
             </h2>
             {monthDays.length === 0 ? (
-              <p className="text-sm text-muted">
-                No events this month{canManage ? " — add one above." : "."}
-              </p>
+              <p className="text-sm text-muted">No events this month.</p>
             ) : (
               <ul className="flex flex-col gap-1.5">
                 {monthDays.map(([dayKey, occs]) => (
@@ -266,7 +263,9 @@ export default async function CalendarPage({
                             className="flex min-w-0 items-baseline gap-2 text-sm"
                           >
                             <span className="shrink-0 text-xs tabular-nums text-muted">
-                              {formatStudioClock(occ.startsAtIso)}
+                              {occ.event.all_day
+                                ? "All day"
+                                : formatStudioClock(occ.startsAtIso)}
                             </span>
                             <span className="truncate font-medium">
                               {occ.event.title}

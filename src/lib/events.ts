@@ -1,6 +1,6 @@
 /** Recurring-event expansion for the calendar grid. */
 
-import { studioDateTimeParts, studioToUtcIso } from "./studio";
+import { studioDateTimeParts, studioDayKey, studioToUtcIso } from "./studio";
 import type { StudioEvent } from "./types";
 
 export type EventOccurrence = {
@@ -8,6 +8,12 @@ export type EventOccurrence = {
   dayKey: string; // "YYYY-MM-DD" studio-local
   startsAtIso: string; // UTC instant of this occurrence
 };
+
+/** "2026-07-31" → "2026-08-01" (calendar arithmetic, timezone-free). */
+function nextDayKey(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
 
 /**
  * Expand events into their occurrences within one studio-local month
@@ -36,6 +42,25 @@ export function occurrencesByDay(
     const baseDay = base.date;
 
     if (event.recurrence === "none") {
+      // An all-day event carries an exclusive end; a multi-day span (e.g. a
+      // camp) shows on every day it covers. Each day gets its own midnight
+      // instant so cards display that day's date, not the first day's.
+      if (event.all_day && event.ends_at) {
+        const endDay = studioDayKey(event.ends_at); // exclusive
+        let day = baseDay;
+        for (let guard = 0; day < endDay && guard < 400; guard++) {
+          if (day.startsWith(ym)) {
+            push({
+              event,
+              dayKey: day,
+              startsAtIso:
+                day === baseDay ? event.starts_at : studioToUtcIso(day, "00:00"),
+            });
+          }
+          day = nextDayKey(day);
+        }
+        continue;
+      }
       if (baseDay.startsWith(ym)) {
         push({ event, dayKey: baseDay, startsAtIso: event.starts_at });
       }

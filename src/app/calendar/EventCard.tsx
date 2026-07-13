@@ -1,10 +1,5 @@
-"use client";
-
-import { useEffect, useState, useTransition } from "react";
 import { formatStudioDateTime, STUDIO_TZ } from "@/lib/studio";
 import type { EventCategory, StudioEvent } from "@/lib/types";
-import { deleteEvent } from "./actions";
-import { EventForm } from "./EventForm";
 
 const CATEGORY_CHIPS: Record<EventCategory, { label: string; className: string }> = {
   class: { label: "Class", className: "bg-accent/15 text-accent" },
@@ -15,7 +10,13 @@ const CATEGORY_CHIPS: Record<EventCategory, { label: string; className: string }
   other: { label: "Other", className: "bg-surface-2 text-muted" },
 };
 
-/** "…Z" → e.g. "7:30 PM" in studio time (for the end of an event). */
+const RECURRENCE_LABEL: Record<string, string> = {
+  daily: "Repeats daily",
+  weekly: "Repeats weekly",
+  monthly: "Repeats monthly",
+};
+
+/** "…Z" → e.g. "7:30 PM" in studio time (for the end of a timed event). */
 function endClock(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-US", {
     timeZone: STUDIO_TZ,
@@ -24,56 +25,30 @@ function endClock(iso: string): string {
   });
 }
 
-const RECURRENCE_LABEL: Record<string, string> = {
-  daily: "Repeats daily",
-  weekly: "Repeats weekly",
-  monthly: "Repeats monthly",
-};
+/** "…Z" → e.g. "Thu, Jul 16" in studio time (for all-day events). */
+function allDayLabel(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    timeZone: STUDIO_TZ,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 /**
- * One calendar event. Officers who manage the calendar get Edit (inline form)
- * and Delete (two-tap confirm) controls. For recurring events pass
- * `occursAtIso` so the card shows this occurrence's date; editing/deleting
- * always affects the whole series.
+ * One calendar event, read-only. Events come from the studio's Google calendar
+ * (mirrored into the DB) — there is no in-app editing. For a recurring or
+ * multi-day occurrence pass `occursAtIso` so the card shows this day's date.
  */
 export function EventCard({
   event,
   occursAtIso,
-  canManage,
 }: {
   event: StudioEvent;
   occursAtIso?: string;
-  canManage: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  // Confirm state times out so a stray first tap doesn't linger.
-  useEffect(() => {
-    if (!confirming) return;
-    const id = setTimeout(() => setConfirming(false), 4000);
-    return () => clearTimeout(id);
-  }, [confirming]);
-
-  if (editing) {
-    return <EventForm event={event} onDone={() => setEditing(false)} />;
-  }
-
   const chip = CATEGORY_CHIPS[event.category] ?? CATEGORY_CHIPS.other;
-
-  const handleDelete = () => {
-    if (!confirming) {
-      setConfirming(true);
-      return;
-    }
-    setConfirming(false);
-    startTransition(async () => {
-      const result = await deleteEvent(event.id);
-      if (result?.error) setError(result.error);
-    });
-  };
+  const whenIso = occursAtIso ?? event.starts_at;
 
   return (
     <article className="rounded-2xl border border-border bg-surface px-4 py-4">
@@ -93,8 +68,14 @@ export function EventCard({
       <h3 className="mt-2 text-base font-semibold">{event.title}</h3>
 
       <div className="mt-1 text-sm text-muted">
-        {formatStudioDateTime(occursAtIso ?? event.starts_at)}
-        {event.ends_at ? ` – ${endClock(event.ends_at)}` : null}
+        {event.all_day ? (
+          `${allDayLabel(whenIso)} · All day`
+        ) : (
+          <>
+            {formatStudioDateTime(whenIso)}
+            {event.ends_at ? ` – ${endClock(event.ends_at)}` : null}
+          </>
+        )}
       </div>
 
       {event.location && (
@@ -105,33 +86,6 @@ export function EventCard({
         <p className="mt-3 whitespace-pre-line text-sm text-foreground/90">
           {event.description}
         </p>
-      )}
-
-      {canManage && (
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
-          <button
-            onClick={() => setEditing(true)}
-            className="rounded-full border border-border bg-surface-2 px-4 py-2 text-sm font-medium text-muted transition active:scale-[0.98]"
-          >
-            Edit
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={pending}
-            className={`rounded-full px-4 py-2 text-sm font-medium transition active:scale-[0.98] disabled:opacity-60 ${
-              confirming
-                ? "bg-danger text-background"
-                : "border border-danger/40 bg-danger/10 text-danger"
-            }`}
-          >
-            {pending
-              ? "Deleting…"
-              : confirming
-                ? "Tap again to delete"
-                : "Delete"}
-          </button>
-          {error && <span className="text-xs text-danger">{error}</span>}
-        </div>
       )}
     </article>
   );

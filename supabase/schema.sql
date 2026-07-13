@@ -199,10 +199,45 @@ create index if not exists events_starts_idx on public.events (starts_at);
 
 -- Recurring events: the row is the first occurrence; the app expands
 -- occurrences (daily/weekly/monthly) when rendering the calendar grid.
+-- (Legacy: Google-sourced rows are pre-expanded to 'none' by the sync.)
 alter table public.events add column if not exists recurrence text not null default 'none';
 alter table public.events drop constraint if exists events_recurrence_check;
 alter table public.events add constraint events_recurrence_check
   check (recurrence in ('none', 'daily', 'weekly', 'monthly'));
+
+-- The studio's public Google calendar is the single source of truth for
+-- events: a cron job (app/api/calendar-sync) mirrors it into this table with
+-- source = 'google'. 'native' rows are legacy — the in-app editor was removed.
+alter table public.events add column if not exists source text not null default 'native';
+alter table public.events drop constraint if exists events_source_check;
+alter table public.events add constraint events_source_check
+  check (source in ('native', 'google'));
+
+-- All-day events (Google `start.date`) render without a clock. `ends_at` holds
+-- the exclusive end (the morning after the last day) so a multi-day span like a
+-- camp expands across every day it covers.
+alter table public.events add column if not exists all_day boolean not null default false;
+
+-- Stable key for upserting Google events (one row per expanded instance). Null
+-- for native rows; Postgres treats nulls as distinct, so the unique constraint
+-- allows many of them.
+alter table public.events add column if not exists google_event_id text;
+alter table public.events drop constraint if exists events_google_event_id_key;
+alter table public.events add constraint events_google_event_id_key
+  unique (google_event_id);
+
+-- ---------------------------------------------------------------------------
+-- Sync state
+-- ---------------------------------------------------------------------------
+
+-- One marker row per sync so the calendar page can throttle its on-demand
+-- Google pull (Vercel Hobby cron can't run more than daily). The page syncs at
+-- most once per throttle window; the daily cron is the backstop. Written only
+-- by the service-role sync, so RLS stays locked with no policy.
+create table if not exists public.sync_state (
+  key            text primary key,
+  last_synced_at timestamptz not null default now()
+);
 
 -- ---------------------------------------------------------------------------
 -- Announcements / messages
@@ -422,6 +457,7 @@ alter table public.chore_assignments  enable row level security;
 alter table public.chore_credits      enable row level security;
 alter table public.absences           enable row level security;
 alter table public.events             enable row level security;
+alter table public.sync_state         enable row level security;
 alter table public.messages           enable row level security;
 alter table public.message_recipients enable row level security;
 alter table public.door_codes         enable row level security;
@@ -548,11 +584,10 @@ create policy "events read all"
   on public.events for select
   using (auth.uid() is not null);
 
+-- Events are written only by the Google Calendar sync, which runs with the
+-- service role and bypasses RLS. No client session writes events, so there is
+-- no manage policy (the old president/VP editor was removed).
 drop policy if exists "events manage admins" on public.events;
-create policy "events manage admins"
-  on public.events for all
-  using (public.my_role() in ('president', 'vice_president'))
-  with check (public.my_role() in ('president', 'vice_president'));
 
 -- messages ------------------------------------------------------------------
 

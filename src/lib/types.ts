@@ -56,6 +56,8 @@ export type EventCategory = "class" | "workshop" | "party" | "camp" | "meeting" 
 
 export type EventRecurrence = "none" | "daily" | "weekly" | "monthly";
 
+export type EventSource = "native" | "google";
+
 export type StudioEvent = {
   id: string;
   title: string;
@@ -65,6 +67,12 @@ export type StudioEvent = {
   starts_at: string;
   ends_at: string | null;
   recurrence: EventRecurrence;
+  /** All-day events render without a clock; `ends_at` is the exclusive end. */
+  all_day: boolean;
+  /** Where the row came from. Google events are read-only in the app. */
+  source: EventSource;
+  /** Upsert key for Google-sourced rows; null for legacy native rows. */
+  google_event_id: string | null;
   created_by: string | null;
   created_at: string;
 };
