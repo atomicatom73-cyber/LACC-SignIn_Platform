@@ -1,14 +1,6 @@
 import { formatStudioDateTime, STUDIO_TZ } from "@/lib/studio";
-import type { EventCategory, StudioEvent } from "@/lib/types";
-
-const CATEGORY_CHIPS: Record<EventCategory, { label: string; className: string }> = {
-  class: { label: "Class", className: "bg-accent/15 text-accent" },
-  workshop: { label: "Workshop", className: "bg-sky-500/15 text-sky-300" },
-  party: { label: "Party", className: "bg-pink-500/15 text-pink-300" },
-  camp: { label: "Camp", className: "bg-success/15 text-success" },
-  meeting: { label: "Meeting", className: "bg-violet-500/15 text-violet-300" },
-  other: { label: "Other", className: "bg-surface-2 text-muted" },
-};
+import { eventDaySpan } from "@/lib/events";
+import type { StudioEvent } from "@/lib/types";
 
 const RECURRENCE_LABEL: Record<string, string> = {
   daily: "Repeats daily",
@@ -35,10 +27,22 @@ function allDayLabel(iso: string): string {
   });
 }
 
+/** "2026-07-06" → "Mon, Jul 6" (calendar date, timezone-free). */
+function dayKeyLabel(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 /**
  * One calendar event, read-only. Events come from the studio's Google calendar
- * (mirrored into the DB) — there is no in-app editing. For a recurring or
- * multi-day occurrence pass `occursAtIso` so the card shows this day's date.
+ * (mirrored into the DB) — there is no in-app editing. For a recurring
+ * occurrence pass `occursAtIso` so the card shows this day's date; a multi-day
+ * span (e.g. a camp) shows its full date range regardless.
  */
 export function EventCard({
   event,
@@ -47,28 +51,27 @@ export function EventCard({
   event: StudioEvent;
   occursAtIso?: string;
 }) {
-  const chip = CATEGORY_CHIPS[event.category] ?? CATEGORY_CHIPS.other;
   const whenIso = occursAtIso ?? event.starts_at;
+  const span = eventDaySpan(event);
 
   return (
     <article className="rounded-2xl border border-border bg-surface px-4 py-4">
-      <span className="flex flex-wrap items-center gap-2">
-        <span
-          className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${chip.className}`}
-        >
-          {chip.label}
+      {event.recurrence !== "none" && (
+        <span className="inline-block rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-muted">
+          🔁 {RECURRENCE_LABEL[event.recurrence]}
         </span>
-        {event.recurrence !== "none" && (
-          <span className="inline-block rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-muted">
-            🔁 {RECURRENCE_LABEL[event.recurrence]}
-          </span>
-        )}
-      </span>
+      )}
 
-      <h3 className="mt-2 text-base font-semibold">{event.title}</h3>
+      <h3
+        className={`text-base font-semibold ${event.recurrence !== "none" ? "mt-2" : ""}`}
+      >
+        {event.title}
+      </h3>
 
       <div className="mt-1 text-sm text-muted">
-        {event.all_day ? (
+        {span.isMultiDay ? (
+          `${dayKeyLabel(span.startKey)} – ${dayKeyLabel(span.endKey)}`
+        ) : event.all_day ? (
           `${allDayLabel(whenIso)} · All day`
         ) : (
           <>

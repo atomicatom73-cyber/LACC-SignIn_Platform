@@ -33,6 +33,16 @@ function shortDay(key: string): string {
   }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
+/** "2026-07-14" → "Jul 14" (calendar date, timezone-free). */
+function monthDay(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 export default async function CalendarPage({
   searchParams,
 }: {
@@ -127,6 +137,22 @@ export default async function CalendarPage({
   const monthDays = [...byDay.entries()].sort(([a], [b]) =>
     a.localeCompare(b),
   );
+
+  // "This month at a glance" lists one row per event, not per day: a multi-day
+  // span (e.g. a week-long camp) still marks every day on the grid above, but
+  // here it appears once — on its first day in the month — as a date range.
+  const seenMultiDay = new Set<string>();
+  const glanceDays = monthDays
+    .map(([dayKey, occs]) => {
+      const visible = occs.filter((occ) => {
+        if (!occ.isMultiDay) return true;
+        if (seenMultiDay.has(occ.event.id)) return false;
+        seenMultiDay.add(occ.event.id);
+        return true;
+      });
+      return [dayKey, visible] as const;
+    })
+    .filter(([, occs]) => occs.length > 0);
 
   const prev = addMonths(month, -1).slice(0, 7);
   const next = addMonths(month, 1).slice(0, 7);
@@ -235,11 +261,11 @@ export default async function CalendarPage({
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
               This month at a glance
             </h2>
-            {monthDays.length === 0 ? (
+            {glanceDays.length === 0 ? (
               <p className="text-sm text-muted">No events this month.</p>
             ) : (
               <ul className="flex flex-col gap-1.5">
-                {monthDays.map(([dayKey, occs]) => (
+                {glanceDays.map(([dayKey, occs]) => (
                   <li key={dayKey}>
                     <Link
                       href={`/calendar?month=${ym}&day=${dayKey}`}
@@ -263,9 +289,11 @@ export default async function CalendarPage({
                             className="flex min-w-0 items-baseline gap-2 text-sm"
                           >
                             <span className="shrink-0 text-xs tabular-nums text-muted">
-                              {occ.event.all_day
-                                ? "All day"
-                                : formatStudioClock(occ.startsAtIso)}
+                              {occ.isMultiDay
+                                ? `${monthDay(occ.spanStartKey)} – ${monthDay(occ.spanEndKey)}`
+                                : occ.event.all_day
+                                  ? "All day"
+                                  : formatStudioClock(occ.startsAtIso)}
                             </span>
                             <span className="truncate font-medium">
                               {occ.event.title}
