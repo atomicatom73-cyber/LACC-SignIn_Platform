@@ -8,10 +8,12 @@
  *
  * SERVER ONLY — reads the Resend secret from the environment.
  *
- * Pre-domain demo note: with an unverified sending domain, Resend only delivers
- * to the address that owns the Resend account. Once laccsignin.com is verified,
- * set EMAIL_FROM to something like "LACC Studio <noreply@laccsignin.com>";
- * until then it sends from Resend's shared onboarding@resend.dev address.
+ * EMAIL_FROM must be an address on a domain verified in Resend — the club's is
+ * laccstudio.org, so "LACC Studio <noreply@laccstudio.org>". If it's unset, the
+ * fallback below sends from Resend's shared onboarding@resend.dev sandbox, which
+ * ONLY delivers to the Resend account owner; every other recipient 403s and,
+ * because sends are best-effort, fails silently. Set EMAIL_FROM in Vercel too —
+ * a missing prod env var is invisible until someone reports mail never arrived.
  */
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -73,14 +75,18 @@ export async function sendEmail(args: SendArgs): Promise<SendResult> {
 
 /** Absolute base URL for links inside emails — origin only. */
 export function siteUrl(): string {
-  const raw = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
-  // Collapse to the origin so a NEXT_PUBLIC_SITE_URL that carries a stray path
-  // (e.g. copied from the browser while on /officer) can't prefix — and 404 —
-  // every emailed link.
+  const raw = (process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000").trim();
+  // Links in email MUST be absolute. A NEXT_PUBLIC_SITE_URL set without a scheme
+  // ("laccstudio.org") makes new URL() throw, and returning it raw yields a
+  // RELATIVE href — which a mail client resolves against its own domain, so the
+  // reset link 404s inside Gmail. Assume https when the scheme is missing.
+  const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+  // Collapse to the origin so a value that carries a stray path (e.g. copied
+  // from the browser while on /officer) can't prefix — and 404 — every link.
   try {
-    return new URL(raw).origin;
+    return new URL(absolute).origin;
   } catch {
-    return raw.replace(/\/+$/, "");
+    return absolute.replace(/\/+$/, "");
   }
 }
 

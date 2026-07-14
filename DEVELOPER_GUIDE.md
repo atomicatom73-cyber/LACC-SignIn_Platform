@@ -253,7 +253,14 @@ Events flow one way: the studio's **public** Google calendar → `syncGoogleCale
 
 ### Email: optional by design
 
-`lib/email.ts` talks to Resend over plain HTTP. If `RESEND_API_KEY` is unset it logs and returns `{ ok: false, skipped: true }` instead of throwing — announcement sending must keep succeeding when email is off. Preserve this: any new email call site must tolerate a skipped/failed send. Until the club's domain is verified in Resend, mail only delivers to the Resend account owner (fine for demos).
+`lib/email.ts` talks to Resend over plain HTTP. If `RESEND_API_KEY` is unset it logs and returns `{ ok: false, skipped: true }` instead of throwing — announcement sending must keep succeeding when email is off. Preserve this: any new email call site must tolerate a skipped/failed send.
+
+The flip side of that resilience is that **email fails silently** — nothing surfaces in the UI. Two env vars have to be right in *every* environment, Vercel included:
+
+- `RESEND_API_KEY` — unset means every send is skipped.
+- `EMAIL_FROM` — must be on the club's verified Resend domain, `laccstudio.org` (e.g. `LACC Studio <noreply@laccstudio.org>`). Unset falls back to Resend's shared `onboarding@resend.dev` sandbox, which only delivers to the Resend account owner — everyone else 403s, silently.
+
+If mail "isn't sending," check those two in the Vercel dashboard before debugging anything else. Also note there is **no signup email** — `registerMember()` pre-confirms the account (`email_confirm: true`), so the only mail the app ever sends is the password-reset link and announcement notifications.
 
 ### Accounts: the synthetic-email trick
 
