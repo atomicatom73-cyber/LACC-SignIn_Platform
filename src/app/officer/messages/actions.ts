@@ -20,40 +20,44 @@ export async function sendMessage(
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   const audienceRaw = String(formData.get("audience") ?? "");
-  const audience =
-    audienceRaw === "all" || audienceRaw === "selected" ? audienceRaw : null;
+  const audience = (
+    ["active", "inactive", "everyone", "selected"] as const
+  ).find((a) => a === audienceRaw);
 
   if (!subject) return { error: "Add a subject." };
   if (!body) return { error: "Write a message body." };
   if (!audience) return { error: "Pick an audience." };
 
   let recipientIds: string[];
-  if (audience === "all") {
-    const { data, error } = await supabase
-      .from("members")
-      .select("id")
-      .eq("role", "member")
-      .eq("active", true);
-    if (error) return { error: error.message };
-    recipientIds = (data ?? []).map((m: { id: string }) => m.id);
-  } else {
+  if (audience === "selected") {
     const picked = formData.getAll("recipients").map(String).filter(Boolean);
     if (picked.length === 0) {
       return { error: "Choose at least one member." };
     }
-    // Only send to real, active members — silently drops stale ids.
+    // Only send to real members — silently drops stale ids. Inactive members
+    // are fine here: picking one by hand is explicit enough.
     const { data, error } = await supabase
       .from("members")
       .select("id")
       .in("id", picked)
-      .eq("role", "member")
-      .eq("active", true);
+      .eq("role", "member");
+    if (error) return { error: error.message };
+    recipientIds = (data ?? []).map((m: { id: string }) => m.id);
+  } else {
+    // Status filters: 'active' / 'inactive' / 'everyone'. Account-less
+    // members (imported from the roster sheet or officer-added) count too —
+    // they can't read the in-app inbox yet, but the email step below still
+    // reaches anyone with an address on file.
+    let query = supabase.from("members").select("id").eq("role", "member");
+    if (audience === "active") query = query.eq("active", true);
+    if (audience === "inactive") query = query.eq("active", false);
+    const { data, error } = await query;
     if (error) return { error: error.message };
     recipientIds = (data ?? []).map((m: { id: string }) => m.id);
   }
 
   if (recipientIds.length === 0) {
-    return { error: "No active members to send to." };
+    return { error: "No members match that audience." };
   }
 
   const { data: message, error: messageError } = await supabase

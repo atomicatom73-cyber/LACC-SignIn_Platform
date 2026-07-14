@@ -1,6 +1,11 @@
 import { requireOfficer } from "@/lib/auth";
+import {
+  membersSheetConfigured,
+  membersSheetSyncStatus,
+  syncMembersSheetThrottled,
+} from "@/lib/members-sheet";
 import { canManageMembers } from "@/lib/roles";
-import { monthKey } from "@/lib/studio";
+import { formatStudioDateTime, monthKey } from "@/lib/studio";
 import type { Absence, ChoreCredit, Member } from "@/lib/types";
 import type { MemberSummary, ThisMonthChip } from "./MemberDetail";
 import { AddMemberForm } from "./AddMemberForm";
@@ -12,11 +17,23 @@ export default async function OfficerMembersPage() {
   const { supabase, member: viewer } = await requireOfficer();
   const month = monthKey();
 
+  // Mirror the roster sheet before reading — throttled, and never allowed to
+  // take the page down with it (a Google hiccup just shows yesterday's data).
+  if (membersSheetConfigured()) {
+    try {
+      await syncMembersSheetThrottled();
+    } catch (err) {
+      console.error("[members] sheet sync failed:", err);
+    }
+  }
+
   const [membersRes, creditsRes, absencesRes, assignmentsRes, choresRes] =
     await Promise.all([
       supabase
         .from("members")
-        .select("id, user_id, full_name, role, pin, active, created_at")
+        .select(
+          "id, user_id, full_name, role, pin, active, created_at, email, in_sheet, sheet_paid, sheet_payment_type, sheet_policy, sheet_photos, sheet_comments",
+        )
         .order("full_name", { ascending: true }),
       supabase
         .from("chore_credits")
@@ -101,6 +118,17 @@ export default async function OfficerMembersPage() {
       active: m.active,
       created_at: m.created_at,
       hasAccount: m.user_id !== null,
+      email: m.email,
+      inSheet: m.in_sheet,
+      sheet: m.in_sheet
+        ? {
+            paid: m.sheet_paid,
+            paymentType: m.sheet_payment_type,
+            policy: m.sheet_policy,
+            photos: m.sheet_photos,
+            comments: m.sheet_comments,
+          }
+        : null,
       availableCredits: memberCredits.filter((c) => c.used_month === null).length,
       chip,
       credits: memberCredits,
@@ -121,12 +149,16 @@ export default async function OfficerMembersPage() {
       members: members.filter((m) => m.role !== "member").map(summarize),
     },
     {
-      title: "Deactivated",
+      title: "Inactive",
       members: members
         .filter((m) => m.role === "member" && !m.active)
         .map(summarize),
     },
   ];
+
+  const syncStatus = membersSheetConfigured()
+    ? await membersSheetSyncStatus()
+    : null;
 
   return (
     <main className="anim-fade">
@@ -138,6 +170,30 @@ export default async function OfficerMembersPage() {
       {canManageMembers(viewer.role) && (
         <div className="mt-6">
           <AddMemberForm />
+        </div>
+      )}
+
+      {syncStatus && (
+        <div className="mt-6 rounded-2xl border border-border bg-surface px-4 py-3 text-sm">
+          <p className="text-muted">
+            Roster synced from sheet tab &ldquo;{syncStatus.tab}&rdquo; ·{" "}
+            {formatStudioDateTime(syncStatus.syncedAt)} · {syncStatus.totalRows}{" "}
+            rows ({syncStatus.matched} matched, {syncStatus.created} new).
+            Active status and sheet details follow the sheet — edit them there.
+          </p>
+          {syncStatus.flagged.length > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs font-medium text-muted">
+                {syncStatus.flagged.length} row
+                {syncStatus.flagged.length === 1 ? "" : "s"} need attention
+              </summary>
+              <ul className="mt-2 flex flex-col gap-1 text-xs text-muted">
+                {syncStatus.flagged.map((note) => (
+                  <li key={note}>· {note}</li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
 

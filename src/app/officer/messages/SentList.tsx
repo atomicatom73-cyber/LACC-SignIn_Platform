@@ -3,7 +3,16 @@
 import { useState } from "react";
 import { ROLE_LABELS } from "@/lib/roles";
 import { formatStudioDate, formatStudioDateTime } from "@/lib/studio";
-import type { Message } from "@/lib/types";
+import type { Message, MessageAudience } from "@/lib/types";
+
+/** 'all' is the legacy audience value — it meant active members. */
+const AUDIENCE_LABELS: Record<MessageAudience, string> = {
+  all: "All members",
+  active: "Active members",
+  inactive: "Inactive members",
+  everyone: "Everyone",
+  selected: "Selected members",
+};
 
 export type SentMessage = Pick<
   Message,
@@ -55,9 +64,7 @@ export function SentList({ messages }: { messages: SentMessage[] }) {
               className="mt-3 w-full border-t border-border pt-3 text-left"
             >
               <div className="flex items-center justify-between gap-3 text-xs text-muted">
-                <span>
-                  {message.audience === "all" ? "All members" : "Selected members"}
-                </span>
+                <span>{AUDIENCE_LABELS[message.audience] ?? "Members"}</span>
                 <span className="tabular-nums">
                   {read} of {total} read {expanded ? "▴" : "▾"}
                 </span>

@@ -80,6 +80,11 @@ export function MembersList({
                           {ROLE_LABELS[member.role]}
                         </span>
                       )}
+                      {member.role === "member" && !member.hasAccount && (
+                        <span className="shrink-0 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                          No account
+                        </span>
+                      )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {member.availableCredits > 0 && (

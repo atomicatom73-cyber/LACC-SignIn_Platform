@@ -17,8 +17,9 @@ export function AddMemberForm() {
         Add a member
       </h2>
       <p className="mt-1 text-xs text-muted">
-        They appear on the kiosk right away. If they later create an account
-        with the same name, ask an officer to tidy any duplicate row.
+        They appear on the kiosk right away, and an email puts them on the
+        announcement list. If they later create an account with the same name
+        or email, it links up automatically.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <input
@@ -26,6 +27,13 @@ export function AddMemberForm() {
           required
           autoComplete="off"
           placeholder="Full name"
+          className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+        />
+        <input
+          name="email"
+          type="email"
+          autoComplete="off"
+          placeholder="Email (optional)"
           className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
         />
         <div className="w-40">

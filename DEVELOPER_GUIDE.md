@@ -47,7 +47,8 @@ All of them are documented inline in `.env.local.example` — read that file, it
 | `RESEND_API_KEY` | server only | Email notifications & password-reset emails. App still works without it — email is skipped with a console warning. |
 | `NEXT_PUBLIC_SITE_URL` | yes | Links inside emails point to the wrong place. |
 | `GOOGLE_CALENDAR_ID` / `GOOGLE_CALENDAR_API_KEY` | server only | Google Calendar sync (calendar page still shows native events). |
-| `CRON_SECRET` | server only | Guards `/api/calendar-sync` in production. Leave unset locally so you can trigger it by hand. |
+| `GOOGLE_MEMBERS_SHEET_ID` / `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `GOOGLE_SERVICE_ACCOUNT_KEY` | server only | Member roster sync from the studio's private sign-ups Google sheet (`src/lib/members-sheet.ts`). Without them the sync is skipped and the members page just shows whatever is in the database. The sheet must be shared (Viewer) with the service account's email; the key is the `private_key` field from the service account's JSON key file. |
+| `CRON_SECRET` | server only | Guards `/api/calendar-sync` and `/api/members-sync` in production. Leave unset locally so you can trigger them by hand. |
 
 **Never** put `SUPABASE_SERVICE_ROLE_KEY` in any file or variable whose name starts with `NEXT_PUBLIC_`. `NEXT_PUBLIC_` variables are bundled into the browser JavaScript that every visitor downloads. The service-role key bypasses ALL database security.
 

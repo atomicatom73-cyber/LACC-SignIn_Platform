@@ -303,7 +303,11 @@ export async function deleteMemberAccount(
   return null;
 }
 
-/** Add a kiosk-only member (president + VP). They can claim it later. */
+/**
+ * Add a kiosk-only member (president + VP). With an email they're on the
+ * announcement list right away; registering with that email (or the same
+ * name) later claims this row automatically.
+ */
 export async function addMember(
   _prev: FormState,
   formData: FormData,
@@ -318,9 +322,23 @@ export async function addMember(
     return { error: "PIN must be exactly 4 digits (or leave it blank)." };
   }
 
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { error: "That email doesn't look right (or leave it blank)." };
+  }
+  if (email) {
+    const { data: taken } = await supabase
+      .from("members")
+      .select("id")
+      .ilike("email", email)
+      .maybeSingle();
+    if (taken) return { error: "That email is already on another member." };
+  }
+
   const { error } = await supabase.from("members").insert({
     full_name: fullName,
     pin: pin || null,
+    email: email || null,
   });
   if (error) return { error: error.message };
 

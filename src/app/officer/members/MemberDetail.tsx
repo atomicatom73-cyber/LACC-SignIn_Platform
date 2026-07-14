@@ -27,6 +27,15 @@ export type MemberJob = {
   status: "pending" | "completed";
 };
 
+/** Bookkeeping cells mirrored from the roster sheet (officer-facing text). */
+export type SheetInfo = {
+  paid: string | null;
+  paymentType: string | null;
+  policy: string | null;
+  photos: string | null;
+  comments: string | null;
+};
+
 /** Everything the members page precomputes for one role='member' row. */
 export type MemberSummary = {
   id: string;
@@ -35,12 +44,23 @@ export type MemberSummary = {
   active: boolean;
   created_at: string;
   hasAccount: boolean;
+  email: string | null;
+  inSheet: boolean;
+  sheet: SheetInfo | null;
   availableCredits: number;
   chip: ThisMonthChip;
   credits: ChoreCredit[];
   absences: Absence[];
   jobs: MemberJob[];
 };
+
+/** Sheet cells are free text; just make bare Y/N read like words. */
+function sheetValue(value: string | null): string {
+  if (!value) return "—";
+  if (/^y(es)?$/i.test(value)) return "Yes";
+  if (/^no?$/i.test(value)) return "No";
+  return value;
+}
 
 export function MemberDetail({
   member,
@@ -79,6 +99,55 @@ export function MemberDetail({
 
   return (
     <div className="grid gap-4 border-t border-border px-4 py-4 sm:grid-cols-2">
+      {member.role === "member" && (
+        <section className="sm:col-span-2">
+          <h3 className="text-xs uppercase tracking-wide text-muted">
+            Roster info
+          </h3>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+            <dt className="text-muted">Email</dt>
+            <dd className="min-w-0 break-words">
+              {member.email ?? <span className="text-muted">none on file</span>}
+            </dd>
+            <dt className="text-muted">Account</dt>
+            <dd>
+              {member.hasAccount ? (
+                "Has an app account"
+              ) : (
+                <span className="text-muted">
+                  No account yet — announcements still reach their email
+                </span>
+              )}
+            </dd>
+            {member.sheet && (
+              <>
+                <dt className="text-muted">Paid</dt>
+                <dd>{sheetValue(member.sheet.paid)}</dd>
+                <dt className="text-muted">Payment type</dt>
+                <dd>{sheetValue(member.sheet.paymentType)}</dd>
+                <dt className="text-muted">Policy signed</dt>
+                <dd>{sheetValue(member.sheet.policy)}</dd>
+                <dt className="text-muted">OK with photos</dt>
+                <dd>{sheetValue(member.sheet.photos)}</dd>
+                {member.sheet.comments && (
+                  <>
+                    <dt className="text-muted">Comments</dt>
+                    <dd className="min-w-0 break-words">
+                      {member.sheet.comments}
+                    </dd>
+                  </>
+                )}
+              </>
+            )}
+          </dl>
+          {member.inSheet && (
+            <p className="mt-2 text-xs text-muted">
+              Synced from the studio&apos;s sign-ups sheet — edit these there.
+            </p>
+          )}
+        </section>
+      )}
+
       {member.role === "member" && (
         <section className="sm:col-span-2">
           <h3 className="text-xs uppercase tracking-wide text-muted">
@@ -292,11 +361,13 @@ export function MemberDetail({
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-medium">
-                {member.active ? "Active member" : "Deactivated"}
+                {member.active ? "Active member" : "Inactive"}
               </div>
               <p className="mt-0.5 text-xs text-muted">
-                Deactivated members leave the kiosk roster and job rotation
-                but keep their history.
+                Inactive members leave the kiosk roster and job rotation but
+                keep their history.
+                {member.inSheet &&
+                  " This member's status follows the studio sheet — a change here lasts only until the next sync."}
               </p>
             </div>
             <button

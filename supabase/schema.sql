@@ -55,6 +55,26 @@ create unique index if not exists members_email_key
   on public.members (lower(email))
   where email is not null;
 
+-- Roster sync from the studio's "LACC Member session sign-ups/fees" Google
+-- sheet (src/lib/members-sheet.ts). The sheet is the source of truth for who
+-- is active: every sync re-applies the sheet's Active column to members it can
+-- match (in_sheet = true) and imports unknown rows as kiosk-only members, so
+-- in-app status edits for synced members only last until the next sync.
+-- The sheet_* columns mirror the sheet's bookkeeping cells verbatim (free
+-- text, officer-facing, edited in the sheet — never written by the app).
+alter table public.members
+  add column if not exists in_sheet boolean not null default false;
+alter table public.members
+  add column if not exists sheet_paid text;
+alter table public.members
+  add column if not exists sheet_payment_type text;
+alter table public.members
+  add column if not exists sheet_policy text;
+alter table public.members
+  add column if not exists sheet_photos text;
+alter table public.members
+  add column if not exists sheet_comments text;
+
 -- ---------------------------------------------------------------------------
 -- Shifts (studio sign-in / sign-out)
 -- ---------------------------------------------------------------------------
@@ -239,6 +259,11 @@ create table if not exists public.sync_state (
   last_synced_at timestamptz not null default now()
 );
 
+-- Human-facing summary of the last run (tab name, row counts, skipped rows…).
+-- Written by the members-sheet sync; the officer members page displays it.
+alter table public.sync_state
+  add column if not exists detail jsonb;
+
 -- ---------------------------------------------------------------------------
 -- Announcements / messages
 -- ---------------------------------------------------------------------------
@@ -255,6 +280,12 @@ create table if not exists public.messages (
   audience    text not null default 'selected' check (audience in ('all', 'selected')),
   created_at  timestamptz not null default now()
 );
+
+-- Audience filters: 'active' / 'inactive' / 'everyone' target by membership
+-- status ('all' is the legacy value for old rows — it meant active members).
+alter table public.messages drop constraint if exists messages_audience_check;
+alter table public.messages add constraint messages_audience_check
+  check (audience in ('all', 'selected', 'active', 'inactive', 'everyone'));
 
 create table if not exists public.message_recipients (
   message_id uuid not null references public.messages (id) on delete cascade,

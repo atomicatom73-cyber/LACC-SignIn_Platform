@@ -94,6 +94,11 @@ async function loginEmailForAlias(aliasEmail: string): Promise<string | null> {
  * gates the new account — but we do send a one-time welcome email (best-effort).
  * The handle_new_user trigger creates the member row from the metadata name;
  * the PIN is what they tap in with on the studio quick sign-in screen.
+ *
+ * If the person is already on the roster WITHOUT a login (imported from the
+ * studio's sign-ups sheet, or officer-added), the signup claims that row —
+ * matched by email first, then by name — so their status and history attach
+ * to the new account instead of creating a duplicate.
  */
 export async function registerMember(
   fullNameRaw: string,
@@ -123,17 +128,34 @@ export async function registerMember(
 
   const supabase = createAdminClient();
 
-  // Reject a duplicate email up front so we don't create an orphan login.
-  const { data: emailTaken } = await supabase
+  // A member row already carrying this email either blocks the signup
+  // (someone's live account) or — when it has no login attached — is an
+  // imported/officer-added roster row this signup should CLAIM.
+  const { data: emailRow } = await supabase
     .from("members")
-    .select("id")
+    .select("id, user_id, role, full_name")
     .ilike("email", contactEmail)
     .maybeSingle();
-  if (emailTaken) {
+  if (emailRow && (emailRow.user_id || emailRow.role !== "member")) {
     return {
       error:
         "That email is already on an account. Log in instead, or use a different email.",
     };
+  }
+
+  // Claim target: the email match first, else an account-less roster row
+  // whose name maps to the same login as the one they're signing up with.
+  let claim = emailRow ?? null;
+  if (!claim) {
+    const { data: candidates } = await supabase
+      .from("members")
+      .select("id, user_id, role, full_name")
+      .is("user_id", null)
+      .eq("role", "member");
+    claim =
+      (candidates ?? []).find(
+        (m) => memberLoginEmail(m.full_name) === loginEmail,
+      ) ?? null;
   }
 
   const { data: created, error } = await supabase.auth.admin.createUser({
@@ -153,12 +175,57 @@ export async function registerMember(
     return { error: error.message };
   }
 
-  // The handle_new_user trigger has already made the member row; stamp the
-  // kiosk PIN and the real email (login alias / recovery / notifications) on it.
-  const { error: profileError } = await supabase
-    .from("members")
-    .update({ pin, email: contactEmail })
-    .eq("user_id", created.user.id);
+  // The handle_new_user trigger has already made a fresh member row. When
+  // this person was already on the roster, move the login onto THAT row
+  // instead, so their active status, sheet details, and any announcements
+  // already addressed to them come with the account.
+  let profileError: { message: string } | null = null;
+  if (claim) {
+    // user_id is unique — free it by removing the trigger-created row first.
+    const { error: dropError } = await supabase
+      .from("members")
+      .delete()
+      .eq("user_id", created.user.id);
+    if (dropError) {
+      // Trigger row survives; stamp it like a fresh signup and move on.
+      const { error: stampError } = await supabase
+        .from("members")
+        .update({ pin, email: contactEmail })
+        .eq("user_id", created.user.id);
+      profileError = stampError;
+    } else {
+      // Their typed name becomes the login name, so it lands on the row too.
+      const { data: claimed, error: claimError } = await supabase
+        .from("members")
+        .update({
+          user_id: created.user.id,
+          full_name: fullName,
+          pin,
+          email: contactEmail,
+        })
+        .eq("id", claim.id)
+        .is("user_id", null)
+        .select("id");
+      if (claimError || !claimed?.length) {
+        // Claim lost a race — recreate a plain profile row so the fresh
+        // login isn't left without one.
+        const { error: insertError } = await supabase.from("members").insert({
+          user_id: created.user.id,
+          full_name: fullName,
+          pin,
+          email: contactEmail,
+        });
+        profileError =
+          insertError ?? claimError ?? { message: "claim matched no row" };
+      }
+    }
+  } else {
+    const { error: stampError } = await supabase
+      .from("members")
+      .update({ pin, email: contactEmail })
+      .eq("user_id", created.user.id);
+    profileError = stampError;
+  }
   if (profileError) {
     // The login still works — worst case the PIN/email just aren't saved yet
     // and they can add them from the account page.

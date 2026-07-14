@@ -3,13 +3,15 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { sendMessage } from "./actions";
 
-export type PickerMember = { id: string; full_name: string };
+export type PickerMember = { id: string; full_name: string; active: boolean };
+
+type ComposeAudience = "active" | "everyone" | "inactive" | "selected";
 
 export function ComposeForm({ members }: { members: PickerMember[] }) {
   const [state, formAction, pending] = useActionState(sendMessage, null);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [audience, setAudience] = useState<"all" | "selected">("all");
+  const [audience, setAudience] = useState<ComposeAudience>("active");
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -85,10 +87,12 @@ export function ComposeForm({ members }: { members: PickerMember[] }) {
           <legend className="mb-2 text-xs uppercase tracking-wide text-muted">
             Audience
           </legend>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {(
               [
-                { value: "all", label: "All members" },
+                { value: "active", label: "Active members" },
+                { value: "inactive", label: "Inactive members" },
+                { value: "everyone", label: "Everyone" },
                 { value: "selected", label: "Choose members" },
               ] as const
             ).map((option) => (
@@ -129,7 +133,7 @@ export function ComposeForm({ members }: { members: PickerMember[] }) {
               </span>
             </div>
             {members.length === 0 ? (
-              <p className="mt-3 text-sm text-muted">No active members yet.</p>
+              <p className="mt-3 text-sm text-muted">No members yet.</p>
             ) : (
               <ul className="mt-2 max-h-56 overflow-y-auto">
                 {members.map((m) => (
@@ -143,7 +147,12 @@ export function ComposeForm({ members }: { members: PickerMember[] }) {
                         onChange={() => toggle(m.id)}
                         className="h-5 w-5 shrink-0 accent-accent"
                       />
-                      {m.full_name}
+                      <span className="min-w-0 truncate">{m.full_name}</span>
+                      {!m.active && (
+                        <span className="ml-auto shrink-0 text-xs text-muted">
+                          inactive
+                        </span>
+                      )}
                     </label>
                   </li>
                 ))}

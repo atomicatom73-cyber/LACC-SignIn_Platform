@@ -10,6 +10,16 @@ export type Member = {
   pin: string | null;
   active: boolean;
   created_at: string;
+  /** Real contact/login-alias email; null for members who haven't added one. */
+  email: string | null;
+  /** True when the last roster sync matched this member to a sheet row. */
+  in_sheet: boolean;
+  /** Bookkeeping cells mirrored verbatim from the roster sheet (read-only). */
+  sheet_paid: string | null;
+  sheet_payment_type: string | null;
+  sheet_policy: string | null;
+  sheet_photos: string | null;
+  sheet_comments: string | null;
 };
 
 export type Chore = {
@@ -91,13 +101,21 @@ export type StudentSignin = {
   signed_in_at: string;
 };
 
+/** 'all' is the legacy value on old rows — it meant active members. */
+export type MessageAudience =
+  | "all"
+  | "selected"
+  | "active"
+  | "inactive"
+  | "everyone";
+
 export type Message = {
   id: string;
   sender_id: string | null;
   sender_role: Role;
   subject: string;
   body: string;
-  audience: "all" | "selected";
+  audience: MessageAudience;
   created_at: string;
 };
 

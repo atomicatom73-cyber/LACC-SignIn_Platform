@@ -1,5 +1,6 @@
 import { requireOfficer } from "@/lib/auth";
 import type { Role } from "@/lib/roles";
+import type { MessageAudience } from "@/lib/types";
 import { ComposeForm, type PickerMember } from "./ComposeForm";
 import { SentList, type SentMessage } from "./SentList";
 
@@ -11,7 +12,7 @@ type MessageRow = {
   sender_role: Role;
   subject: string;
   body: string;
-  audience: "all" | "selected";
+  audience: MessageAudience;
   created_at: string;
   message_recipients: {
     member_id: string;
@@ -32,9 +33,9 @@ export default async function OfficerMessagesPage() {
       .order("created_at", { ascending: false }),
     supabase
       .from("members")
-      .select("id, full_name")
+      .select("id, full_name, active")
       .eq("role", "member")
-      .eq("active", true)
+      .order("active", { ascending: false })
       .order("full_name", { ascending: true }),
   ]);
 
