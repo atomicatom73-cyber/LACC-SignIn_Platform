@@ -260,7 +260,9 @@ The flip side of that resilience is that **email fails silently** — nothing su
 - `RESEND_API_KEY` — unset means every send is skipped.
 - `EMAIL_FROM` — must be on the club's verified Resend domain, `laccstudio.org` (e.g. `LACC Studio <noreply@laccstudio.org>`). Unset falls back to Resend's shared `onboarding@resend.dev` sandbox, which only delivers to the Resend account owner — everyone else 403s, silently.
 
-If mail "isn't sending," check those two in the Vercel dashboard before debugging anything else. Also note there is **no signup email** — `registerMember()` pre-confirms the account (`email_confirm: true`), so the only mail the app ever sends is the password-reset link and announcement notifications.
+If mail "isn't sending," check those two in the Vercel dashboard before debugging anything else.
+
+The app sends exactly three emails, all best-effort: a **welcome** email on signup, a **password-reset link**, and an **announcement notification**. There is still no *verification* email — `registerMember()` pre-confirms the account (`email_confirm: true`), so nothing gates a new signup. Never put the member's PIN in an email: name + PIN resets their password (`resetPasswordWithPin`), which makes it a credential.
 
 ### Accounts: the synthetic-email trick
 

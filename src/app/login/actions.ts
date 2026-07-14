@@ -10,7 +10,12 @@ import {
   OFFICER_ROLES,
 } from "@/lib/roles";
 import { verifyMemberCredential } from "@/lib/member-credentials";
-import { renderResetEmail, sendEmail, siteUrl } from "@/lib/email";
+import {
+  renderResetEmail,
+  renderWelcomeEmail,
+  sendEmail,
+  siteUrl,
+} from "@/lib/email";
 
 export type RegisterResult = { error: string } | { email: string };
 
@@ -85,7 +90,8 @@ async function loginEmailForAlias(aliasEmail: string): Promise<string | null> {
 /**
  * Create a member account from a name + password + kiosk PIN. The synthetic
  * @member.lacc.local address is derived from the name (see memberLoginEmail);
- * the account is pre-confirmed so no verification email is ever involved.
+ * the account is pre-confirmed, so there is no *verification* email and nothing
+ * gates the new account — but we do send a one-time welcome email (best-effort).
  * The handle_new_user trigger creates the member row from the metadata name;
  * the PIN is what they tap in with on the studio quick sign-in screen.
  */
@@ -159,7 +165,31 @@ export async function registerMember(
     console.error("Failed to save PIN/email:", profileError.message);
   }
 
+  // Welcome mail is best-effort, like every other send in this app: the account
+  // already exists and the caller is about to sign straight into it, so a Resend
+  // outage must not turn a successful signup into a failed one. Skipped when the
+  // email didn't make it onto the row — there'd be nothing to write to anyway.
+  if (!profileError) {
+    await sendWelcomeEmail(fullName, contactEmail);
+  }
+
   return { email: loginEmail };
+}
+
+/** One-time "your account is ready" email. Swallows every failure by design. */
+async function sendWelcomeEmail(fullName: string, to: string): Promise<void> {
+  try {
+    const url = `${siteUrl()}/me`;
+    const firstName = fullName.split(" ")[0] || fullName;
+    await sendEmail({
+      to,
+      subject: "Welcome to LACC Studio",
+      text: `Hi ${firstName},\n\nYour LACC Studio account is ready. Here's how to use it:\n\nSigning in\nUse your name (or this email address) together with the password you just chose.\n\nAt the studio\nTap in and out on the sign-in tablet with the 4-digit PIN you picked. Keep it to yourself — it also unlocks a password reset.\n\nOpen LACC Studio: ${url}\n\nWe'll email you when the officers post an announcement. You can turn that off any time from your account page.\n`,
+      html: renderWelcomeEmail({ name: fullName, url }),
+    });
+  } catch (err) {
+    console.error("[register] welcome email failed:", err);
+  }
 }
 
 /**

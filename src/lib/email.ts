@@ -150,6 +150,37 @@ export function renderAnnouncementEmail(args: {
   `);
 }
 
+/**
+ * Email sent once, when a member creates their account.
+ *
+ * Never restate the PIN here: name + PIN is enough to reset the account's
+ * password (see resetPasswordWithPin), so it's a credential, and mail is not a
+ * safe channel for one. Nudge them toward the PIN they chose, don't repeat it.
+ */
+export function renderWelcomeEmail(args: { name: string; url: string }): string {
+  const name = escapeHtml(args.name.split(" ")[0] || args.name);
+  return shell(`
+    <p style="margin:0 0 4px;font-size:15px;color:#8a8479;">Hi ${name},</p>
+    <p style="margin:0 0 20px;font-size:15px;line-height:1.55;">Your LACC Studio account is ready. Here's how to use it:</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 22px;">
+      <tr>
+        <td style="padding:0 0 14px;font-size:15px;line-height:1.55;color:#3d3a35;">
+          <strong style="color:#1c1a17;">Signing in</strong><br>
+          Use your name (or this email address) together with the password you just chose.
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:0;font-size:15px;line-height:1.55;color:#3d3a35;">
+          <strong style="color:#1c1a17;">At the studio</strong><br>
+          Tap in and out on the sign-in tablet with the 4-digit PIN you picked. Keep it to yourself — it also unlocks a password reset.
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0 0 20px;"><a href="${args.url}" style="${BUTTON}">Open LACC Studio</a></p>
+    <p style="margin:0;font-size:13px;color:#8a8479;line-height:1.5;">We'll email you when the officers post an announcement. You can turn that off any time from your account page.</p>
+  `);
+}
+
 /** Email sent when a member requests a password-reset link. */
 export function renderResetEmail(args: { link: string }): string {
   return shell(`
