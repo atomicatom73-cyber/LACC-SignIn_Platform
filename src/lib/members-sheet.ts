@@ -39,14 +39,35 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
  * GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_SERVICE_ACCOUNT_KEY, but the literal
  * field names from the service account's JSON key file (client_email /
  * private_key) are accepted too — that's what gets pasted in practice.
+ * Values survive the usual paste accidents: surrounding quotes, literal
+ * \n / \r escapes, or the ENTIRE JSON key file dropped into either var.
  */
 function serviceAccount(): { clientEmail?: string; privateKey?: string } {
-  return {
-    clientEmail:
-      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || process.env.client_email,
-    privateKey:
-      process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.private_key,
+  const unquote = (v?: string) =>
+    v?.trim().replace(/^['"]+/, "").replace(/['"]+$/, "") || undefined;
+  let clientEmail = unquote(
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || process.env.client_email,
+  );
+  let privateKey = unquote(
+    process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.private_key,
+  );
+
+  const tryJson = (v?: string) => {
+    if (!v?.startsWith("{")) return null;
+    try {
+      return JSON.parse(v) as { client_email?: string; private_key?: string };
+    } catch {
+      return null;
+    }
   };
+  const json = tryJson(privateKey) ?? tryJson(clientEmail);
+  if (json) {
+    clientEmail = json.client_email ?? clientEmail;
+    privateKey = json.private_key ?? privateKey;
+  }
+
+  privateKey = privateKey?.replace(/\\n/g, "\n").replace(/\r/g, "");
+  return { clientEmail, privateKey };
 }
 
 export function membersSheetConfigured(): boolean {
@@ -70,11 +91,15 @@ async function accessToken(): Promise<string> {
     return cachedToken.token;
   }
 
-  const { clientEmail, privateKey: rawKey } = serviceAccount();
-  const privateKey = rawKey?.replace(/\\n/g, "\n");
+  const { clientEmail, privateKey } = serviceAccount();
   if (!clientEmail || !privateKey) {
     throw new Error(
       "GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_SERVICE_ACCOUNT_KEY (or client_email / private_key) must be set.",
+    );
+  }
+  if (!privateKey.includes("-----BEGIN")) {
+    throw new Error(
+      "The service-account key doesn't look like a PEM private key — paste the private_key field from the JSON key file (or the whole JSON file).",
     );
   }
 
