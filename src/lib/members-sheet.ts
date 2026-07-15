@@ -34,12 +34,24 @@ const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 /** True when the env vars the sync needs are all present. */
+/**
+ * Service-account identity, from env. The canonical names are
+ * GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_SERVICE_ACCOUNT_KEY, but the literal
+ * field names from the service account's JSON key file (client_email /
+ * private_key) are accepted too — that's what gets pasted in practice.
+ */
+function serviceAccount(): { clientEmail?: string; privateKey?: string } {
+  return {
+    clientEmail:
+      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || process.env.client_email,
+    privateKey:
+      process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.private_key,
+  };
+}
+
 export function membersSheetConfigured(): boolean {
-  return Boolean(
-    process.env.GOOGLE_MEMBERS_SHEET_ID &&
-      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL &&
-      process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
-  );
+  const { clientEmail, privateKey } = serviceAccount();
+  return Boolean(process.env.GOOGLE_MEMBERS_SHEET_ID && clientEmail && privateKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -58,14 +70,11 @@ async function accessToken(): Promise<string> {
     return cachedToken.token;
   }
 
-  const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY?.replace(
-    /\\n/g,
-    "\n",
-  );
+  const { clientEmail, privateKey: rawKey } = serviceAccount();
+  const privateKey = rawKey?.replace(/\\n/g, "\n");
   if (!clientEmail || !privateKey) {
     throw new Error(
-      "GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_SERVICE_ACCOUNT_KEY must be set.",
+      "GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_SERVICE_ACCOUNT_KEY (or client_email / private_key) must be set.",
     );
   }
 
