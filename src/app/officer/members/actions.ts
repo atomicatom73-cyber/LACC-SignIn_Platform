@@ -1,9 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { requireOfficer } from "@/lib/auth";
 import { memberLoginEmail } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requestMembersSheetSync } from "@/lib/members-sheet";
 import { monthLabel } from "@/lib/studio";
 
 /** Result shape shared by the useActionState forms on this page. */
@@ -264,6 +266,7 @@ export async function renameMember(
   if (error) return { error: error.message };
 
   revalidatePath("/officer/members");
+  after(requestMembersSheetSync);
   return { name: newName };
 }
 
@@ -343,5 +346,6 @@ export async function addMember(
   if (error) return { error: error.message };
 
   revalidatePath("/officer/members");
+  after(requestMembersSheetSync);
   return { success: `${fullName} added to the roster.` };
 }

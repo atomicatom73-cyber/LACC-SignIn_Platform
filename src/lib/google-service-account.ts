@@ -1,10 +1,10 @@
 /**
- * Google service-account auth, shared by the members-roster sync (reads the
- * private sign-ups sheet) and the sign-in log export (writes the log sheet).
- * A signed JWT is exchanged for a short-lived access token — no OAuth consent
- * and no SDK. What a token can touch is still governed per-file by Drive
- * sharing: the account is a Viewer on the roster sheet and an Editor on the
- * log sheet, so even a read-write token can't change the roster.
+ * Google service-account auth, shared by the members-roster sync (two-way:
+ * reads the private sign-ups sheet and writes app-side changes back) and the
+ * sign-in log export (writes the log sheet). A signed JWT is exchanged for a
+ * short-lived access token — no OAuth consent and no SDK. What a token can
+ * touch is still governed per-file by Drive sharing: the account is an Editor
+ * on both sheets (the roster write-back needs that, since 2026-07-15).
  */
 
 import { createSign } from "node:crypto";

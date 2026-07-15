@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient as createBareClient } from "@supabase/supabase-js";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
 import {
@@ -10,6 +11,7 @@ import {
   OFFICER_ROLES,
 } from "@/lib/roles";
 import { verifyMemberCredential } from "@/lib/member-credentials";
+import { requestMembersSheetSync } from "@/lib/members-sheet";
 import {
   renderResetEmail,
   renderWelcomeEmail,
@@ -239,6 +241,10 @@ export async function registerMember(
   if (!profileError) {
     await sendWelcomeEmail(fullName, contactEmail);
   }
+
+  // A fresh signup belongs on the board's sheet (and a claim may have put a
+  // new email on a sheet-backed row) — mirror it once the response is out.
+  after(requestMembersSheetSync);
 
   return { email: loginEmail };
 }

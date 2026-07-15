@@ -13,6 +13,22 @@ import { MembersList, type MemberGroup } from "./MembersList";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * ", wrote back 2 emails + 1 name + 3 new rows" — or "" when the last sync
+ * pushed nothing (or predates the write-back feature and has no counts).
+ */
+function describeWriteBack(
+  pushed: { emails: number; names: number; added: number } | undefined,
+): string {
+  if (!pushed) return "";
+  const parts = [
+    pushed.emails > 0 && `${pushed.emails} email${pushed.emails === 1 ? "" : "s"}`,
+    pushed.names > 0 && `${pushed.names} name${pushed.names === 1 ? "" : "s"}`,
+    pushed.added > 0 && `${pushed.added} new row${pushed.added === 1 ? "" : "s"}`,
+  ].filter(Boolean);
+  return parts.length > 0 ? `, wrote back ${parts.join(" + ")}` : "";
+}
+
 export default async function OfficerMembersPage() {
   const { supabase, member: viewer } = await requireOfficer();
   const month = monthKey();
@@ -178,8 +194,11 @@ export default async function OfficerMembersPage() {
           <p className="text-muted">
             Roster synced from sheet tab &ldquo;{syncStatus.tab}&rdquo; ·{" "}
             {formatStudioDateTime(syncStatus.syncedAt)} · {syncStatus.totalRows}{" "}
-            rows ({syncStatus.matched} matched, {syncStatus.created} new).
-            Active status and sheet details follow the sheet — edit them there.
+            rows ({syncStatus.matched} matched, {syncStatus.created} new
+            {describeWriteBack(syncStatus.pushed)}). Active status and sheet
+            details follow the sheet — edit them there. Name and email changes
+            made in the app, and members added here, are written back to the
+            sheet.
           </p>
           {syncStatus.flagged.length > 0 && (
             <details className="mt-2">

@@ -75,6 +75,13 @@ alter table public.members
 alter table public.members
   add column if not exists sheet_comments text;
 
+-- Write-back bookkeeping: the name on the sheet row this member is bound to,
+-- as of the last sync. Null = the sheet has never listed them (so the sync
+-- appends them as a new row). It doubles as a tombstone — a member whose row
+-- the board deleted keeps their sheet_name, so they are never re-added.
+alter table public.members
+  add column if not exists sheet_name text;
+
 -- ---------------------------------------------------------------------------
 -- Shifts (studio sign-in / sign-out)
 -- ---------------------------------------------------------------------------

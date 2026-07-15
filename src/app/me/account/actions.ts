@@ -2,8 +2,10 @@
 
 import { createClient as createBareClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { requireMember } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requestMembersSheetSync } from "@/lib/members-sheet";
 import { memberLoginEmail } from "@/lib/roles";
 
 /** Loose email shape check — good enough to catch typos before we store it. */
@@ -65,6 +67,7 @@ export async function updateMemberName(
 
   revalidatePath("/me/account");
   revalidatePath("/me");
+  after(requestMembersSheetSync);
   return { name: newName };
 }
 
@@ -101,6 +104,7 @@ export async function updateMemberEmail(
   }
 
   revalidatePath("/me/account");
+  after(requestMembersSheetSync);
   return { email };
 }
 
