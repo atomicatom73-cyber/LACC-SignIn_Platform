@@ -335,13 +335,25 @@ export async function exportSigninLogs(): Promise<SigninLogExportResult> {
     });
   }
 
-  if (months.length > 0) {
+  // Clear every tab we manage — including month tabs whose rows have since
+  // vanished entirely (data wipe, member deletion) — then rewrite the ones
+  // that still have data. A month tab is "ours" by title convention.
+  const MONTH_TAB =
+    /^(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}$/;
+  const liveTitles = new Set(months.map((m) => monthLabel(m)));
+  const staleTitles = existingTabs
+    .map((p) => p.title!)
+    .filter((t) => MONTH_TAB.test(t) && !liveTitles.has(t));
+  const clearTitles = [...staleTitles, ...liveTitles];
+  if (clearTitles.length > 0) {
     await sheetsFetch("/values:batchClear", {
       method: "POST",
       body: JSON.stringify({
-        ranges: months.map((m) => `${a1Tab(monthLabel(m))}!A:Z`),
+        ranges: clearTitles.map((t) => `${a1Tab(t)}!A:Z`),
       }),
     });
+  }
+  if (months.length > 0) {
     await sheetsFetch("/values:batchUpdate", {
       method: "POST",
       body: JSON.stringify({
