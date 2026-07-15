@@ -184,8 +184,9 @@ export default async function OfficerMembersPage() {
           {syncStatus.flagged.length > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer text-xs font-medium text-muted">
-                {syncStatus.flagged.length} row
-                {syncStatus.flagged.length === 1 ? "" : "s"} need attention
+                {syncStatus.flagged.length === 1
+                  ? "1 row needs attention"
+                  : `${syncStatus.flagged.length} rows need attention`}
               </summary>
               <ul className="mt-2 flex flex-col gap-1 text-xs text-muted">
                 {syncStatus.flagged.map((note) => (
