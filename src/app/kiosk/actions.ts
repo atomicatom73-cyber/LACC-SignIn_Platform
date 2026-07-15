@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requestSigninLogExport } from "@/lib/signin-log-sheet";
 
 /**
  * Toggle a member's shift from the shared kiosk. Members who set a 4-digit
@@ -47,6 +49,7 @@ export async function toggleKioskShift(
       .is("signed_out_at", null)
       .gte("signed_in_at", openShift.signed_in_at);
     revalidatePath("/kiosk");
+    after(requestSigninLogExport);
     return { nowIn: false, name: member.full_name };
   }
 
@@ -54,6 +57,7 @@ export async function toggleKioskShift(
     .from("shifts")
     .insert({ member_id: memberId, source: "kiosk" });
   revalidatePath("/kiosk");
+  after(requestSigninLogExport);
   return { nowIn: true, name: member.full_name };
 }
 
@@ -93,6 +97,7 @@ export async function kioskGuestSignIn(
     .insert({ host_member_id: hostMemberId, guest_name: guestName });
   if (error) return { error: error.message };
 
+  after(requestSigninLogExport);
   return { success: true, name: guestName };
 }
 
@@ -129,6 +134,7 @@ export async function studentSignIn(
   if (error) return { error: error.message };
 
   revalidatePath("/kiosk/student");
+  after(requestSigninLogExport);
   return { success: true, name: studentName, openStudio };
 }
 
@@ -151,5 +157,6 @@ export async function studentSignOut(
   if (!data) return { error: "Already signed out — you're all set." };
 
   revalidatePath("/kiosk/student");
+  after(requestSigninLogExport);
   return { name: data.student_name };
 }

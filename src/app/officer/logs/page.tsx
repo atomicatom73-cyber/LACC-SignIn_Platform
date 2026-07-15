@@ -1,9 +1,17 @@
+import { after } from "next/server";
 import { requireOfficer } from "@/lib/auth";
 import { MonthGrid, type DayMarker } from "@/components/MonthGrid";
+import {
+  exportSigninLogsThrottled,
+  signinLogSheetConfigured,
+  signinLogSheetStatus,
+  signinLogSheetUrl,
+} from "@/lib/signin-log-sheet";
 import {
   addMonths,
   dayLabel,
   formatStudioClock,
+  formatStudioDateTime,
   monthKey,
   studioDayKey,
   studioToUtcIso,
@@ -48,6 +56,11 @@ export default async function SignInLogsPage({
   searchParams: Promise<{ month?: string; day?: string }>;
 }) {
   const { supabase } = await requireOfficer(["president", "vice_president"]);
+
+  // Keep the log sheet fresh without making the page wait on Google.
+  const sheetConfigured = signinLogSheetConfigured();
+  const sheetStatus = sheetConfigured ? await signinLogSheetStatus() : null;
+  if (sheetConfigured) after(exportSigninLogsThrottled);
 
   const { month: rawMonth, day: rawDay } = await searchParams;
   const currentMonth = monthKey();
@@ -208,6 +221,24 @@ export default async function SignInLogsPage({
           </ul>
         )}
       </section>
+
+      {sheetConfigured && (
+        <p className="mt-8 text-xs text-muted">
+          These logs mirror to a{" "}
+          <a
+            href={signinLogSheetUrl()!}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            Google sheet
+          </a>{" "}
+          after every sign-in.
+          {sheetStatus
+            ? ` Last export ${formatStudioDateTime(sheetStatus.syncedAt)} — ${sheetStatus.rows} rows across ${sheetStatus.months} month${sheetStatus.months === 1 ? "" : "s"}.`
+            : " First export pending."}
+        </p>
+      )}
     </main>
   );
 }

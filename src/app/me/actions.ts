@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requestSigninLogExport } from "@/lib/signin-log-sheet";
 
 /** Toggle the current user's shift: clock in if out, clock out if in. */
 export async function toggleShift() {
@@ -48,6 +50,7 @@ export async function toggleShift() {
   }
 
   revalidatePath("/me");
+  after(requestSigninLogExport);
 }
 
 /** Mark one of the current user's chores done (or back to pending). */
@@ -135,6 +138,7 @@ export async function myGuestSignIn(
     .insert({ host_member_id: member.id, guest_name: guestName });
   if (error) return { error: error.message };
 
+  after(requestSigninLogExport);
   return { success: true, name: guestName };
 }
 
