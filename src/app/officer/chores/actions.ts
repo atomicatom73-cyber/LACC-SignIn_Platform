@@ -18,12 +18,12 @@ function parseSlots(raw: FormDataEntryValue | null): number | { error: string } 
   return slots;
 }
 
-/** Add a job to the catalog (any officer). */
+/** Add a job to the catalog (officers with the jobs permission). */
 export async function createChore(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return { error: "Give the job a name." };
@@ -47,12 +47,12 @@ export async function createChore(
   return { success: `“${name}” added to the catalog.` };
 }
 
-/** Edit a catalog job's name, description, or slots (any officer). */
+/** Edit a catalog job's name, description, or slots (officers with the jobs permission). */
 export async function updateChore(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   const choreId = String(formData.get("chore_id") ?? "").trim();
   if (!choreId) return { error: "Missing job." };
@@ -82,7 +82,7 @@ export async function updateChore(
 export async function deleteChore(
   choreId: string,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!choreId) return { error: "Missing job." };
 
@@ -94,12 +94,12 @@ export async function deleteChore(
   return null;
 }
 
-/** Manually assign a job to a member for a month (any officer). */
+/** Manually assign a job to a member for a month (officers with the jobs permission). */
 export async function assignChore(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase, member } = await requireOfficer();
+  const { supabase, member } = await requireOfficer("jobs");
 
   const choreId = String(formData.get("chore_id") ?? "").trim();
   const memberId = String(formData.get("member_id") ?? "").trim();
@@ -125,11 +125,11 @@ export async function assignChore(
   return { success: "Assigned." };
 }
 
-/** Remove an assignment entirely (any officer). */
+/** Remove an assignment entirely (officers with the jobs permission). */
 export async function removeAssignment(
   assignmentId: string,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!assignmentId) return { error: "Missing assignment." };
 
@@ -144,12 +144,12 @@ export async function removeAssignment(
   return null;
 }
 
-/** Mark an assignment completed / back to pending (any officer). */
+/** Mark an assignment completed / back to pending (officers with the jobs permission). */
 export async function setAssignmentStatus(
   assignmentId: string,
   completed: boolean,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!assignmentId) return { error: "Missing assignment." };
 
@@ -188,7 +188,7 @@ export type ReshufflePreview = {
 export async function previewReshuffle(
   targetMonth: string,
 ): Promise<{ error: string } | { preview: ReshufflePreview }> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!MONTH_RE.test(targetMonth)) return { error: "Bad month." };
   const prevMonth = addMonths(targetMonth, -1);
@@ -280,7 +280,7 @@ export async function publishReshuffle(input: {
   assignments: { chore_id: string; member_id: string }[];
   creditMemberIds: string[];
 }): Promise<FormState> {
-  const { supabase, member } = await requireOfficer();
+  const { supabase, member } = await requireOfficer("jobs");
 
   const { targetMonth } = input;
   if (!MONTH_RE.test(targetMonth)) return { error: "Bad month." };

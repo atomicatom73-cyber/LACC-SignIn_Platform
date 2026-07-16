@@ -1,7 +1,9 @@
 import { requireOfficer } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ROLE_LABELS } from "@/lib/roles";
+import { listOfficerAccounts } from "@/lib/officer-accounts";
+import { hasPermission, officerTitle, PERMISSIONS } from "@/lib/roles";
 import { AccountSettings } from "./AccountSettings";
+import { OfficerManager, type ManagedOfficer } from "./OfficerManager";
 
 export const dynamic = "force-dynamic";
 
@@ -28,10 +30,27 @@ export default async function OfficerAccountPage() {
     linkedName = linked?.full_name ?? null;
   }
 
+  // The president also manages the other officer accounts from here.
+  let managed: ManagedOfficer[] | null = null;
+  if (member.role === "president") {
+    const officers = await listOfficerAccounts();
+    managed = officers.map((o) => ({
+      id: o.id,
+      title: officerTitle(o),
+      locked: o.role === "president",
+      permissions: Object.fromEntries(
+        PERMISSIONS.map((p) => [p.key, hasPermission(o, p.key)]),
+      ) as ManagedOfficer["permissions"],
+    }));
+  }
+
   return (
-    <AccountSettings
-      roleLabel={ROLE_LABELS[member.role]}
-      initialLinkedName={linkedName}
-    />
+    <main className="anim-fade">
+      <AccountSettings
+        roleLabel={officerTitle(member)}
+        initialLinkedName={linkedName}
+      />
+      {managed && <OfficerManager officers={managed} />}
+    </main>
   );
 }

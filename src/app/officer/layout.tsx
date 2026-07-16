@@ -1,5 +1,5 @@
 import { requireOfficer } from "@/lib/auth";
-import { ROLE_LABELS } from "@/lib/roles";
+import { hasPermission, officerTitle } from "@/lib/roles";
 import { Wordmark } from "@/components/Brand";
 import { LogoutButton } from "@/components/LogoutButton";
 import { signOutAuth } from "@/app/me/actions";
@@ -18,7 +18,7 @@ export default async function OfficerLayout({
         <Wordmark />
         <div className="flex items-center gap-3">
           <span className="rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent">
-            {ROLE_LABELS[member.role]}
+            {officerTitle(member)}
           </span>
           <form action={signOutAuth}>
             <LogoutButton />
@@ -26,7 +26,13 @@ export default async function OfficerLayout({
         </div>
       </header>
 
-      <OfficerNav role={member.role} />
+      <OfficerNav
+        access={{
+          jobs: hasPermission(member, "jobs"),
+          logs: hasPermission(member, "logs"),
+          messages: hasPermission(member, "messages"),
+        }}
+      />
 
       <div className="mt-6 flex-1">{children}</div>
     </div>

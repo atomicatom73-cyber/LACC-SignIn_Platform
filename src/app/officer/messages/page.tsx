@@ -22,7 +22,7 @@ type MessageRow = {
 };
 
 export default async function OfficerMessagesPage() {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("messages");
 
   const [messagesRes, membersRes] = await Promise.all([
     supabase

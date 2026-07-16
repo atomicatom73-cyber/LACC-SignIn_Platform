@@ -22,7 +22,7 @@ export default async function OfficerChoresPage({
 }: {
   searchParams: Promise<{ month?: string }>;
 }) {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   const { month: rawMonth } = await searchParams;
   const currentMonth = monthKey();

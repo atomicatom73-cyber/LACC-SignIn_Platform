@@ -49,13 +49,13 @@ type StudentRow = {
   signed_out_at: string | null;
 };
 
-/** Who was in the studio, day by day. President + vice president only. */
+/** Who was in the studio, day by day. Needs the sign-in-logs permission. */
 export default async function SignInLogsPage({
   searchParams,
 }: {
   searchParams: Promise<{ month?: string; day?: string }>;
 }) {
-  const { supabase } = await requireOfficer(["president", "vice_president"]);
+  const { supabase } = await requireOfficer("logs");
 
   // Keep the log sheet fresh without making the page wait on Google.
   const sheetConfigured = signinLogSheetConfigured();

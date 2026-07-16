@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireOfficer } from "@/lib/auth";
+import { hasPermission } from "@/lib/roles";
 import { formatStudioDateTime, monthKey, monthLabel } from "@/lib/studio";
 
 export const dynamic = "force-dynamic";
@@ -63,21 +64,25 @@ export default async function OfficerOverviewPage() {
       </div>
 
       <div className="anim-stagger mt-8 grid gap-4 sm:grid-cols-2">
-        <QuickLink
-          href="/officer/chores"
-          title="Jobs"
-          description="Assign this month's jobs, track statuses, run the monthly reshuffle."
-        />
+        {hasPermission(member, "jobs") && (
+          <QuickLink
+            href="/officer/chores"
+            title="Jobs"
+            description="Assign this month's jobs, track statuses, run the monthly reshuffle."
+          />
+        )}
         <QuickLink
           href="/officer/members"
           title="Members"
           description="Roster, job credits, and absence history."
         />
-        <QuickLink
-          href="/officer/messages"
-          title="Messages"
-          description="Send an announcement to everyone or a hand-picked group."
-        />
+        {hasPermission(member, "messages") && (
+          <QuickLink
+            href="/officer/messages"
+            title="Messages"
+            description="Send an announcement to everyone or a hand-picked group."
+          />
+        )}
         <QuickLink
           href="/calendar"
           title="Calendar"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import { canManageMembers, type Role } from "@/lib/roles";
+import type { Role } from "@/lib/roles";
 import { formatStudioDate, monthKey, monthLabel } from "@/lib/studio";
 import type { Absence, ChoreCredit } from "@/lib/types";
 import {
@@ -41,6 +41,8 @@ export type MemberSummary = {
   id: string;
   full_name: string;
   role: Role;
+  /** Custom officer accounts carry their display title; null otherwise. */
+  officerTitle: string | null;
   active: boolean;
   created_at: string;
   hasAccount: boolean;
@@ -64,12 +66,15 @@ function sheetValue(value: string | null): string {
 
 export function MemberDetail({
   member,
-  viewerRole,
+  viewerCanManage,
+  viewerCanJobs,
   month,
   jobCatalog,
 }: {
   member: MemberSummary;
-  viewerRole: Role;
+  viewerCanManage: boolean;
+  /** Jobs permission: assign jobs, grant credits, mark absences. */
+  viewerCanJobs: boolean;
   month: string;
   jobCatalog: { id: string; name: string }[];
 }) {
@@ -179,21 +184,25 @@ export function MemberDetail({
                     >
                       {job.status === "completed" ? "completed" : "pending"}
                     </span>
-                    <button
-                      onClick={() => run(() => removeAssignment(job.assignmentId))}
-                      disabled={pending}
-                      title="Remove this assignment"
-                      className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-danger transition active:scale-[0.98] disabled:opacity-60"
-                    >
-                      ✕
-                    </button>
+                    {viewerCanJobs && (
+                      <button
+                        onClick={() =>
+                          run(() => removeAssignment(job.assignmentId))
+                        }
+                        disabled={pending}
+                        title="Remove this assignment"
+                        className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-danger transition active:scale-[0.98] disabled:opacity-60"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </span>
                 </li>
               ))}
             </ul>
           )}
 
-          {jobCandidates.length > 0 && (
+          {viewerCanJobs && jobCandidates.length > 0 && (
             <form action={assignAction} className="mt-3 flex gap-2">
               <input type="hidden" name="member_id" value={member.id} />
               <input type="hidden" name="month" value={month} />
@@ -256,7 +265,7 @@ export function MemberDetail({
                     {c.note ? ` · ${c.note}` : ""}
                   </div>
                 </div>
-                {c.used_month === null && (
+                {viewerCanJobs && c.used_month === null && (
                   <button
                     onClick={() => run(() => revokeCredit(c.id))}
                     disabled={pending}
@@ -270,22 +279,24 @@ export function MemberDetail({
           </ul>
         )}
 
-        <form action={grantAction} className="mt-3 flex gap-2">
-          <input type="hidden" name="member_id" value={member.id} />
-          <input
-            name="note"
-            autoComplete="off"
-            placeholder="Note (optional)"
-            className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
-          />
-          <button
-            type="submit"
-            disabled={grantPending}
-            className="shrink-0 rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
-          >
-            {grantPending ? "…" : "Grant credit"}
-          </button>
-        </form>
+        {viewerCanJobs && (
+          <form action={grantAction} className="mt-3 flex gap-2">
+            <input type="hidden" name="member_id" value={member.id} />
+            <input
+              name="note"
+              autoComplete="off"
+              placeholder="Note (optional)"
+              className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+            />
+            <button
+              type="submit"
+              disabled={grantPending}
+              className="shrink-0 rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
+            >
+              {grantPending ? "…" : "Grant credit"}
+            </button>
+          </form>
+        )}
         {grantState?.error && (
           <p className="mt-2 text-sm text-danger">{grantState.error}</p>
         )}
@@ -313,41 +324,45 @@ export function MemberDetail({
                   </div>
                   {a.note && <div className="text-xs text-muted">{a.note}</div>}
                 </div>
-                <button
-                  onClick={() => run(() => removeAbsence(a.id))}
-                  disabled={pending}
-                  className="shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-danger transition active:scale-[0.98] disabled:opacity-60"
-                >
-                  Remove
-                </button>
+                {viewerCanJobs && (
+                  <button
+                    onClick={() => run(() => removeAbsence(a.id))}
+                    disabled={pending}
+                    className="shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-danger transition active:scale-[0.98] disabled:opacity-60"
+                  >
+                    Remove
+                  </button>
+                )}
               </li>
             ))}
           </ul>
         )}
 
-        <form action={absenceAction} className="mt-3 flex flex-wrap gap-2">
-          <input type="hidden" name="member_id" value={member.id} />
-          <input
-            type="month"
-            name="month"
-            required
-            defaultValue={monthKey().slice(0, 7)}
-            className="rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
-          />
-          <input
-            name="note"
-            autoComplete="off"
-            placeholder="Note (optional)"
-            className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
-          />
-          <button
-            type="submit"
-            disabled={absencePending}
-            className="shrink-0 rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
-          >
-            {absencePending ? "…" : "Mark absent"}
-          </button>
-        </form>
+        {viewerCanJobs && (
+          <form action={absenceAction} className="mt-3 flex flex-wrap gap-2">
+            <input type="hidden" name="member_id" value={member.id} />
+            <input
+              type="month"
+              name="month"
+              required
+              defaultValue={monthKey().slice(0, 7)}
+              className="rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+            />
+            <input
+              name="note"
+              autoComplete="off"
+              placeholder="Note (optional)"
+              className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+            />
+            <button
+              type="submit"
+              disabled={absencePending}
+              className="shrink-0 rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-background transition active:scale-[0.98] disabled:opacity-60"
+            >
+              {absencePending ? "…" : "Mark absent"}
+            </button>
+          </form>
+        )}
         {absenceState?.error && (
           <p className="mt-2 text-sm text-danger">{absenceState.error}</p>
         )}
@@ -356,7 +371,7 @@ export function MemberDetail({
         )}
       </section>
 
-      {canManageMembers(viewerRole) && member.role === "member" && (
+      {viewerCanManage && member.role === "member" && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface-2 px-3 py-3 sm:col-span-2">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -364,8 +379,8 @@ export function MemberDetail({
                 {member.active ? "Active member" : "Inactive"}
               </div>
               <p className="mt-0.5 text-xs text-muted">
-                Inactive members leave the kiosk roster and job rotation but
-                keep their history.
+                Inactive members leave the quick sign-in roster and job
+                rotation but keep their history.
                 {member.inSheet &&
                   " This member's status follows the studio sheet — a change here lasts only until the next sync."}
               </p>

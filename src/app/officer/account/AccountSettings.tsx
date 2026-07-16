@@ -19,7 +19,9 @@ export function AccountSettings({
   initialLinkedName: string | null;
 }) {
   return (
-    <main className="anim-fade">
+    // The page supplies the <main> wrapper (the president's officer manager
+    // renders below this).
+    <div>
       <h1 className="text-2xl font-bold tracking-tight">Your account</h1>
       <p className="mt-1 text-muted">
         {roleLabel} — a login shared by whoever holds the role.
@@ -29,7 +31,7 @@ export function AccountSettings({
         <ChangePassword />
         <RecoveryLink initialLinkedName={initialLinkedName} />
       </div>
-    </main>
+    </div>
   );
 }
 

@@ -4,12 +4,7 @@ import { createClient as createBareClient } from "@supabase/supabase-js";
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
-import {
-  isOfficer,
-  memberLoginEmail,
-  OFFICER_ACCOUNTS,
-  OFFICER_ROLES,
-} from "@/lib/roles";
+import { isOfficer, memberLoginEmail } from "@/lib/roles";
 import { verifyMemberCredential } from "@/lib/member-credentials";
 import { requestMembersSheetSync } from "@/lib/members-sheet";
 import {
@@ -368,37 +363,71 @@ export async function resetPinWithPassword(
 }
 
 /**
+ * Sign in to a shared officer account picked from the login screen's list.
+ * The account's synthetic login address lives server-side only — the client
+ * just knows the member row id and the title it displayed.
+ */
+export async function signInOfficer(
+  officerId: string,
+  password: string,
+): Promise<{ error: string } | { ok: true }> {
+  if (!officerId) return { error: "Pick an officer account." };
+
+  const email = await officerAuthEmail(officerId);
+  if (!email) return { error: "That officer account no longer exists." };
+
+  return signIn(email, password);
+}
+
+/** Resolve an officer member-row id to its auth login address, or null. */
+async function officerAuthEmail(officerId: string): Promise<string | null> {
+  const admin = createAdminClient();
+  const { data: row } = await admin
+    .from("members")
+    .select("user_id, role")
+    .eq("id", officerId)
+    .maybeSingle();
+  if (!row?.user_id || !isOfficer(row.role)) return null;
+
+  const { data } = await admin.auth.admin.getUserById(row.user_id);
+  return data?.user?.email ?? null;
+}
+
+/**
  * Reset a forgotten SHARED officer password by proving the personal member
  * account the officer linked from their account page (see linkRecoveryMember).
  * Identity is proven with that member account's password or 4-digit PIN.
  * Returns the officer login email so the client can sign straight in.
  */
 export async function resetOfficerPasswordViaMember(
-  role: string,
+  officerId: string,
   memberName: string,
   credential: string,
   newPassword: string,
 ): Promise<{ error: string } | { email: string }> {
-  if (!isOfficer(role)) return { error: "Pick a valid officer role." };
+  if (!officerId) return { error: "Pick an officer account." };
   if (newPassword.length < 8) {
     return { error: "New password needs at least 8 characters." };
   }
 
   // One generic failure whether no member is linked, the name is wrong, or the
-  // credential is wrong — don't reveal which role has a link set up.
+  // credential is wrong — don't reveal which account has a link set up.
   const genericFail = {
     error:
-      "That doesn't match the member account linked to this role. If no account is linked, ask whoever holds the role to hand over the password.",
+      "That doesn't match the member account linked to this officer account. If no account is linked, ask whoever holds it to hand over the password.",
   };
 
   const admin = createAdminClient();
   const { data: officerRow } = await admin
     .from("members")
-    .select("user_id, recovery_member_id")
-    .eq("role", role)
-    .not("user_id", "is", null)
+    .select("user_id, role, recovery_member_id")
+    .eq("id", officerId)
     .maybeSingle();
-  if (!officerRow?.user_id || !officerRow.recovery_member_id) {
+  if (
+    !officerRow?.user_id ||
+    !isOfficer(officerRow.role) ||
+    !officerRow.recovery_member_id
+  ) {
     return genericFail;
   }
 
@@ -407,14 +436,18 @@ export async function resetOfficerPasswordViaMember(
     return genericFail;
   }
 
+  const { data: authUser } = await admin.auth.admin.getUserById(
+    officerRow.user_id,
+  );
+  const email = authUser?.user?.email;
+  if (!email) return genericFail;
+
   const { error } = await admin.auth.admin.updateUserById(officerRow.user_id, {
     password: newPassword,
   });
   if (error) return { error: error.message };
 
-  return {
-    email: OFFICER_ACCOUNTS[role as (typeof OFFICER_ROLES)[number]],
-  };
+  return { email };
 }
 
 /**

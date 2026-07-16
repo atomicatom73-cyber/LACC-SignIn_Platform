@@ -13,7 +13,7 @@ export default async function KioskPage() {
 
   const { data: members } = await supabase
     .from("members")
-    .select("id, full_name, pin")
+    .select("id, full_name, pin, user_id")
     .eq("active", true)
     .eq("role", "member") // shared officer logins aren't people in the studio
     .order("full_name");
@@ -27,11 +27,13 @@ export default async function KioskPage() {
     (openShifts ?? []).map((s) => [s.member_id, s.signed_in_at]),
   );
 
-  // Only a has-PIN flag goes to the client — never the PIN itself.
+  // Only a has-PIN flag goes to the client — never the PIN itself. Members
+  // without a login account can't sign in until they create one (hasAccount).
   const roster: RosterMember[] = (members ?? []).map((m) => ({
     id: m.id,
     full_name: m.full_name,
     hasPin: Boolean(m.pin),
+    hasAccount: Boolean(m.user_id),
     openSince: openByMember.get(m.id) ?? null,
   }));
 
@@ -55,7 +57,8 @@ export default async function KioskPage() {
       <div className="mt-6">
         <h1 className="text-2xl font-bold tracking-tight">Quick sign in</h1>
         <p className="mt-1 text-muted">
-          Find your name and tap it to sign in or out.
+          Find your name and tap it to sign in — tap your name again to sign
+          out.
         </p>
       </div>
 

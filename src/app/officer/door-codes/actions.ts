@@ -6,14 +6,12 @@ import { requireOfficer } from "@/lib/auth";
 /** Result shape shared by the useActionState forms on this page. */
 export type FormState = { error?: string; success?: string } | null;
 
-const MANAGERS = ["president", "vice_president"] as const;
-
-/** Add a door code (president + VP). */
+/** Add a door code (door-codes permission). */
 export async function addDoorCode(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase, member } = await requireOfficer([...MANAGERS]);
+  const { supabase, member } = await requireOfficer("door_codes");
 
   const title = String(formData.get("title") ?? "").trim();
   if (!title) return { error: "Name the door or lock." };
@@ -34,12 +32,12 @@ export async function addDoorCode(
   return { success: `${title} added.` };
 }
 
-/** Edit an existing door code (president + VP). */
+/** Edit an existing door code (door-codes permission). */
 export async function updateDoorCode(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase } = await requireOfficer([...MANAGERS]);
+  const { supabase } = await requireOfficer("door_codes");
 
   const id = String(formData.get("door_code_id") ?? "").trim();
   if (!id) return { error: "Missing code." };
@@ -62,11 +60,11 @@ export async function updateDoorCode(
   return { success: "Saved." };
 }
 
-/** Delete a door code (president + VP). */
+/** Delete a door code (door-codes permission). */
 export async function deleteDoorCode(
   id: string,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer([...MANAGERS]);
+  const { supabase } = await requireOfficer("door_codes");
 
   if (!id) return { error: "Missing code." };
 

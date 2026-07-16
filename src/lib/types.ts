@@ -1,6 +1,6 @@
 /** Database row types (mirror supabase/schema.sql). */
 
-import type { Role } from "./roles";
+import type { Permission, Role } from "./roles";
 
 export type Member = {
   id: string;
@@ -10,6 +10,10 @@ export type Member = {
   pin: string | null;
   active: boolean;
   created_at: string;
+  /** Display title for president-created officer accounts ("Treasurer"). */
+  officer_title: string | null;
+  /** Officer permission set; null = the role's built-in defaults. */
+  permissions: Partial<Record<Permission, boolean>> | null;
   /** Real contact/login-alias email; null for members who haven't added one. */
   email: string | null;
   /** True when the last roster sync matched this member to a sheet row. */
@@ -112,7 +116,8 @@ export type MessageAudience =
 export type Message = {
   id: string;
   sender_id: string | null;
-  sender_role: Role;
+  /** A Role for classic accounts; the officer's title for custom officers. */
+  sender_role: string;
   subject: string;
   body: string;
   audience: MessageAudience;

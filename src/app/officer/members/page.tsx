@@ -4,7 +4,7 @@ import {
   membersSheetSyncStatus,
   syncMembersSheetThrottled,
 } from "@/lib/members-sheet";
-import { canManageMembers } from "@/lib/roles";
+import { hasPermission } from "@/lib/roles";
 import { formatStudioDateTime, monthKey } from "@/lib/studio";
 import type { Absence, ChoreCredit, Member } from "@/lib/types";
 import type { MemberSummary, ThisMonthChip } from "./MemberDetail";
@@ -48,7 +48,7 @@ export default async function OfficerMembersPage() {
       supabase
         .from("members")
         .select(
-          "id, user_id, full_name, role, pin, active, created_at, email, in_sheet, sheet_paid, sheet_payment_type, sheet_policy, sheet_photos, sheet_comments",
+          "id, user_id, full_name, role, officer_title, pin, active, created_at, email, in_sheet, sheet_paid, sheet_payment_type, sheet_policy, sheet_photos, sheet_comments",
         )
         .order("full_name", { ascending: true }),
       supabase
@@ -131,6 +131,7 @@ export default async function OfficerMembersPage() {
       id: m.id,
       full_name: m.full_name,
       role: m.role,
+      officerTitle: m.officer_title,
       active: m.active,
       created_at: m.created_at,
       hasAccount: m.user_id !== null,
@@ -183,7 +184,7 @@ export default async function OfficerMembersPage() {
         Roster, job credits, and absences.
       </p>
 
-      {canManageMembers(viewer.role) && (
+      {hasPermission(viewer, "members") && (
         <div className="mt-6">
           <AddMemberForm />
         </div>
@@ -220,7 +221,8 @@ export default async function OfficerMembersPage() {
       <div className="mt-6">
         <MembersList
           groups={groups}
-          viewerRole={viewer.role}
+          viewerCanManage={hasPermission(viewer, "members")}
+          viewerCanJobs={hasPermission(viewer, "jobs")}
           month={month}
           jobCatalog={jobCatalog}
         />

@@ -20,7 +20,7 @@ export default async function PrintAssignmentsPage({
 }: {
   searchParams: Promise<{ month?: string }>;
 }) {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   const { month: rawMonth } = await searchParams;
   const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawMonth ?? "")

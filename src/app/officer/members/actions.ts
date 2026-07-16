@@ -11,12 +11,12 @@ import { monthLabel } from "@/lib/studio";
 /** Result shape shared by the useActionState forms on this page. */
 export type FormState = { error?: string; success?: string } | null;
 
-/** Grant one chore credit to a member (any officer). */
+/** Grant one chore credit to a member (officers with the jobs permission). */
 export async function grantCredit(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase, member } = await requireOfficer();
+  const { supabase, member } = await requireOfficer("jobs");
 
   const memberId = String(formData.get("member_id") ?? "").trim();
   if (!memberId) return { error: "Missing member." };
@@ -37,7 +37,7 @@ export async function grantCredit(
 export async function revokeCredit(
   creditId: string,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!creditId) return { error: "Missing credit." };
 
@@ -68,7 +68,7 @@ export async function markAbsence(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase, member } = await requireOfficer();
+  const { supabase, member } = await requireOfficer("jobs");
 
   const memberId = String(formData.get("member_id") ?? "").trim();
   if (!memberId) return { error: "Missing member." };
@@ -95,11 +95,11 @@ export async function markAbsence(
   return { success: `Marked absent for ${monthLabel(month)}.` };
 }
 
-/** Remove an absence row (any officer). */
+/** Remove an absence row (officers with the jobs permission). */
 export async function removeAbsence(
   absenceId: string,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!absenceId) return { error: "Missing absence." };
 
@@ -118,7 +118,7 @@ export async function setActive(
   memberId: string,
   active: boolean,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer(["president", "vice_president"]);
+  const { supabase } = await requireOfficer("members");
 
   if (!memberId) return { error: "Missing member." };
 
@@ -147,7 +147,7 @@ const PW_WORDS = [
 export async function resetMemberPassword(
   memberId: string,
 ): Promise<{ error: string } | { password: string }> {
-  const { supabase } = await requireOfficer(["president", "vice_president"]);
+  const { supabase } = await requireOfficer("members");
 
   if (!memberId) return { error: "Missing member." };
 
@@ -165,7 +165,7 @@ export async function resetMemberPassword(
   }
 
   const pick = () => PW_WORDS[Math.floor(Math.random() * PW_WORDS.length)];
-  let a = pick();
+  const a = pick();
   let b = pick();
   while (b === a) b = pick();
   const password = `${a}-${b}-${Math.floor(10 + Math.random() * 90)}`;
@@ -187,7 +187,7 @@ export async function resetMemberPassword(
 export async function resetMemberPin(
   memberId: string,
 ): Promise<{ error: string } | { pin: string }> {
-  const { supabase } = await requireOfficer(["president", "vice_president"]);
+  const { supabase } = await requireOfficer("members");
 
   if (!memberId) return { error: "Missing member." };
 
@@ -198,7 +198,7 @@ export async function resetMemberPin(
     .maybeSingle();
   if (!target) return { error: "Member not found." };
   if (target.role !== "member") {
-    return { error: "Officer accounts don't use kiosk PINs." };
+    return { error: "Officer accounts don't use quick sign-in PINs." };
   }
 
   const pin = String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
@@ -222,7 +222,7 @@ export async function renameMember(
   memberId: string,
   newNameRaw: string,
 ): Promise<{ error: string } | { name: string }> {
-  await requireOfficer(["president", "vice_president"]);
+  await requireOfficer("members");
 
   if (!memberId) return { error: "Missing member." };
   const newName = newNameRaw.trim().replace(/\s+/g, " ");
@@ -279,7 +279,7 @@ export async function renameMember(
 export async function deleteMemberAccount(
   memberId: string,
 ): Promise<{ error: string } | null> {
-  await requireOfficer(["president", "vice_president"]);
+  await requireOfficer("members");
 
   if (!memberId) return { error: "Missing member." };
 
@@ -315,7 +315,7 @@ export async function addMember(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase } = await requireOfficer(["president", "vice_president"]);
+  const { supabase } = await requireOfficer("members");
 
   const fullName = String(formData.get("full_name") ?? "").trim();
   if (!fullName) return { error: "Enter the member's full name." };

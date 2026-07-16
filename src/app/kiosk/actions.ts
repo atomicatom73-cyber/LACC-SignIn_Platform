@@ -18,10 +18,16 @@ export async function toggleKioskShift(
 
   const { data: member, error: memberErr } = await supabase
     .from("members")
-    .select("id, full_name, pin")
+    .select("id, full_name, pin, user_id")
     .eq("id", memberId)
     .single();
   if (memberErr || !member) return { error: "Member not found." };
+
+  // Quick sign-in is for members with an app account — the roster UI walks
+  // account-less members to signup, and this backstops stale clients.
+  if (!member.user_id) {
+    return { error: "Create an account first — then you can sign in here." };
+  }
 
   if (member.pin && member.pin !== pin.trim()) {
     return { error: "Wrong PIN. Try again." };

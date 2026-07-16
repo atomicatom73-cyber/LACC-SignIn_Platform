@@ -17,9 +17,9 @@ export function AddMemberForm() {
         Add a member
       </h2>
       <p className="mt-1 text-xs text-muted">
-        They appear on the kiosk right away, and an email puts them on the
-        announcement list. If they later create an account with the same name
-        or email, it links up automatically.
+        They appear on the quick sign-in screen right away, and an email puts
+        them on the announcement list. If they later create an account with the
+        same name or email, it links up automatically.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <input
