@@ -103,7 +103,10 @@ export function MemberDetail({
   const jobCandidates = jobCatalog.filter((j) => !assignedNames.has(j.name));
 
   return (
-    <div className="grid gap-4 border-t border-border px-4 py-4 sm:grid-cols-2">
+    // grid-cols-1 matters: without an explicit column the implicit track
+    // min-sizes to its widest child and the whole card overflows a phone
+    // screen (Tailwind's grid-cols-N = minmax(0, 1fr) tracks).
+    <div className="grid grid-cols-1 gap-4 border-t border-border px-4 py-4 sm:grid-cols-2">
       {member.role === "member" && (
         <section className="sm:col-span-2">
           <h3 className="text-xs uppercase tracking-wide text-muted">

@@ -22,19 +22,21 @@ export function AddMemberForm() {
         same name or email, it links up automatically.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
+        {/* w-full on phones: flex-1 alone would shrink these to slivers
+            beside the fixed-width PIN field instead of wrapping. */}
         <input
           name="full_name"
           required
           autoComplete="off"
           placeholder="Full name"
-          className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+          className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent sm:w-auto sm:min-w-0 sm:flex-1"
         />
         <input
           name="email"
           type="email"
           autoComplete="off"
           placeholder="Email (optional)"
-          className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+          className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent sm:w-auto sm:min-w-0 sm:flex-1"
         />
         <div className="w-40">
           <PasswordInput
