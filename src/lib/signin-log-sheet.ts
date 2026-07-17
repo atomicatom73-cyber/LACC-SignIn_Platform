@@ -59,6 +59,7 @@ export function signinLogSheetUrl(): string | null {
 type ShiftRow = {
   signed_in_at: string;
   signed_out_at: string | null;
+  auto_closed: boolean;
   source: string;
   members: { full_name: string } | null;
 };
@@ -66,6 +67,7 @@ type GuestRow = {
   guest_name: string;
   signed_in_at: string;
   signed_out_at: string | null;
+  auto_closed: boolean;
   members: { full_name: string } | null;
 };
 type StudentRow = {
@@ -74,6 +76,7 @@ type StudentRow = {
   session_type: "class" | "open_studio";
   signed_in_at: string;
   signed_out_at: string | null;
+  auto_closed: boolean;
 };
 
 /**
@@ -124,6 +127,7 @@ function studioWeekday(iso: string): string {
 function toCells(entry: {
   at: string;
   out: string | null;
+  autoClosed: boolean;
   name: string;
   type: "Member" | "Guest" | "Student";
   details: string;
@@ -133,7 +137,13 @@ function toCells(entry: {
     studioDayKey(entry.at),
     studioWeekday(entry.at),
     formatStudioClock(entry.at),
-    entry.out ? formatStudioClock(entry.out) : "",
+    // A forgotten sign-out was force-closed at end of day, so its out-time is a
+    // synthetic 23:59:59 — say so plainly rather than let it read as a real one.
+    entry.autoClosed
+      ? "Forgot to sign out"
+      : entry.out
+        ? formatStudioClock(entry.out)
+        : "",
     entry.name,
     entry.type,
     entry.details,
@@ -204,7 +214,9 @@ export async function exportSigninLogs(): Promise<SigninLogExportResult> {
     pageAll<ShiftRow>((from, to) =>
       admin
         .from("shifts")
-        .select("signed_in_at, signed_out_at, source, members(full_name)")
+        .select(
+          "signed_in_at, signed_out_at, auto_closed, source, members(full_name)",
+        )
         .order("signed_in_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
@@ -212,7 +224,9 @@ export async function exportSigninLogs(): Promise<SigninLogExportResult> {
     pageAll<GuestRow>((from, to) =>
       admin
         .from("guest_signins")
-        .select("guest_name, signed_in_at, signed_out_at, members(full_name)")
+        .select(
+          "guest_name, signed_in_at, signed_out_at, auto_closed, members(full_name)",
+        )
         .order("signed_in_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
@@ -221,7 +235,7 @@ export async function exportSigninLogs(): Promise<SigninLogExportResult> {
       admin
         .from("student_signins")
         .select(
-          "student_name, class_label, session_type, signed_in_at, signed_out_at",
+          "student_name, class_label, session_type, signed_in_at, signed_out_at, auto_closed",
         )
         .order("signed_in_at", { ascending: true })
         .order("id", { ascending: true })
@@ -233,6 +247,7 @@ export async function exportSigninLogs(): Promise<SigninLogExportResult> {
     ...shifts.map((s) => ({
       at: s.signed_in_at,
       out: s.signed_out_at,
+      autoClosed: Boolean(s.auto_closed),
       name: s.members?.full_name ?? "Unknown member",
       type: "Member" as const,
       details: "",
@@ -241,6 +256,7 @@ export async function exportSigninLogs(): Promise<SigninLogExportResult> {
     ...guests.map((g) => ({
       at: g.signed_in_at,
       out: g.signed_out_at,
+      autoClosed: Boolean(g.auto_closed),
       name: g.guest_name,
       type: "Guest" as const,
       details: `Guest of ${g.members?.full_name ?? "unknown"}`,
@@ -250,6 +266,8 @@ export async function exportSigninLogs(): Promise<SigninLogExportResult> {
       at: s.signed_in_at,
       // Class students are presence-only; only open-studio visits sign out.
       out: s.session_type === "open_studio" ? s.signed_out_at : null,
+      // ...so only an open-studio visit can be a forgotten sign-out.
+      autoClosed: s.session_type === "open_studio" && Boolean(s.auto_closed),
       name: s.student_name,
       type: "Student" as const,
       // Open-studio rows carry the class the visit comes with; legacy rows

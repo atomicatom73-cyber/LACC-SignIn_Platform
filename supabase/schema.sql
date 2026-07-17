@@ -114,6 +114,12 @@ create unique index if not exists shifts_one_open_per_member
 create index if not exists shifts_member_idx on public.shifts (member_id);
 create index if not exists shifts_signed_in_idx on public.shifts (signed_in_at);
 
+-- Set true by close_stale_shifts() when it force-closes a forgotten shift at
+-- end of day, so the sign-in log sheet can mark it "Forgot to sign out" rather
+-- than showing the synthetic 23:59:59 out-time as if it were a real sign-out.
+alter table public.shifts
+  add column if not exists auto_closed boolean not null default false;
+
 -- Guests: a signed-in member brings a visitor, reminded to pay at sign-in.
 -- Shows in the officer sign-in logs. Guests are signed out automatically when
 -- their host signs out (or by close_stale_shifts at end of day).
@@ -126,6 +132,11 @@ create table if not exists public.guest_signins (
 
 alter table public.guest_signins
   add column if not exists signed_out_at timestamptz;
+
+-- See shifts.auto_closed: true only when close_stale_shifts() swept a guest who
+-- was never signed out (not when their host signs out — that's a real out-time).
+alter table public.guest_signins
+  add column if not exists auto_closed boolean not null default false;
 
 create index if not exists guest_signins_time_idx
   on public.guest_signins (signed_in_at);
@@ -144,6 +155,10 @@ alter table public.student_signins
   add column if not exists session_type text not null default 'class';
 alter table public.student_signins
   add column if not exists signed_out_at timestamptz;
+-- See shifts.auto_closed: true only for open-studio visitors close_stale_shifts()
+-- swept because they forgot to sign out (class rows are presence-only).
+alter table public.student_signins
+  add column if not exists auto_closed boolean not null default false;
 
 alter table public.student_signins drop constraint if exists student_signins_session_type_check;
 alter table public.student_signins add constraint student_signins_session_type_check
@@ -494,7 +509,9 @@ create trigger chore_assignments_protect
 -- ---------------------------------------------------------------------------
 -- Forgotten sign-outs: close open member shifts, guest visits, and open-studio
 -- student visits from previous studio days at 23:59:59 local (America/Denver)
--- time of the day they signed in.
+-- time of the day they signed in. Each closed row is also flagged
+-- `auto_closed = true` so the sign-in log sheet shows "Forgot to sign out"
+-- instead of the synthetic 23:59:59 out-time (see src/lib/signin-log-sheet.ts).
 -- Called opportunistically from the app; optionally schedule with pg_cron.
 -- ---------------------------------------------------------------------------
 
@@ -506,7 +523,8 @@ as $$
   update public.shifts
      set signed_out_at =
            (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
-             at time zone 'America/Denver') - interval '1 second'
+             at time zone 'America/Denver') - interval '1 second',
+         auto_closed = true
    where signed_out_at is null
      and (signed_in_at at time zone 'America/Denver')::date
          < (now() at time zone 'America/Denver')::date;
@@ -514,7 +532,8 @@ as $$
   update public.guest_signins
      set signed_out_at =
            (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
-             at time zone 'America/Denver') - interval '1 second'
+             at time zone 'America/Denver') - interval '1 second',
+         auto_closed = true
    where signed_out_at is null
      and (signed_in_at at time zone 'America/Denver')::date
          < (now() at time zone 'America/Denver')::date;
@@ -523,7 +542,8 @@ as $$
   update public.student_signins
      set signed_out_at =
            (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
-             at time zone 'America/Denver') - interval '1 second'
+             at time zone 'America/Denver') - interval '1 second',
+         auto_closed = true
    where signed_out_at is null
      and session_type = 'open_studio'
      and (signed_in_at at time zone 'America/Denver')::date
