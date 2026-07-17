@@ -113,8 +113,9 @@ export type StudentFormState =
   | null;
 
 /**
- * Sign a student in — either for a class (name + class label, presence-only)
- * or for open studio time (name only; they sign out from the kiosk later).
+ * Sign a student in — for a class (presence-only) or for open studio time
+ * (they sign out from the kiosk later). Both say which class: the one
+ * they're here for, or the one their open-studio time comes with.
  */
 export async function studentSignIn(
   _prev: StudentFormState,
@@ -122,11 +123,15 @@ export async function studentSignIn(
 ): Promise<StudentFormState> {
   const openStudio = formData.get("session_type") === "open_studio";
   const studentName = String(formData.get("student_name") ?? "").trim();
-  const classLabel = openStudio
-    ? "Open studio"
-    : String(formData.get("class_label") ?? "").trim();
+  const classLabel = String(formData.get("class_label") ?? "").trim();
   if (!studentName) return { error: "Enter your name." };
-  if (!classLabel) return { error: "Enter which class you're here for." };
+  if (!classLabel) {
+    return {
+      error: openStudio
+        ? "Enter which class you did."
+        : "Enter which class you're here for.",
+    };
+  }
   if (studentName.length > 80 || classLabel.length > 80) {
     return { error: "Keep the name and class under 80 characters." };
   }

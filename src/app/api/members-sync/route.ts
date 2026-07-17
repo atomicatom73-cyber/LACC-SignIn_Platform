@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sendDueJobReminders } from "@/lib/job-reminders";
 import { syncMembersSheet } from "@/lib/members-sheet";
 import {
   exportSigninLogs,
@@ -10,11 +11,12 @@ export const dynamic = "force-dynamic";
 
 /**
  * Daily Google-sheet reconciliation (see vercel.json): pulls the member
- * roster sheet into Supabase, then pushes the sign-in logs out to the log
- * sheet. Both live on this one route because Vercel Hobby allows only two
- * cron jobs and the calendar sync holds the other slot. The primary syncs
- * are on-demand (page loads for the roster, sign-in/out actions for the
- * logs); this is the backstop. Vercel signs cron requests with
+ * roster sheet into Supabase, pushes the sign-in logs out to the log sheet,
+ * and fires any due job reminders. All three live on this one route because
+ * Vercel Hobby allows only two cron jobs and the calendar sync holds the
+ * other slot. The sheet syncs are also on-demand (page loads for the roster,
+ * sign-in/out actions for the logs) with this as the backstop; the job
+ * reminders run only from here. Vercel signs cron requests with
  * `Authorization: Bearer $CRON_SECRET`; when that env var is set we require
  * it, so the endpoint can't be run by anyone who finds the URL.
  */
@@ -41,12 +43,14 @@ export async function GET(request: Request) {
   const signinLogs = signinLogSheetConfigured()
     ? await run(exportSigninLogs)
     : { skipped: "GOOGLE_SIGNIN_LOG_SHEET_ID not set" };
+  const jobReminders = await run(() => sendDueJobReminders());
 
   const failed =
     (members as { error?: string }).error ||
-    (signinLogs as { error?: string }).error;
+    (signinLogs as { error?: string }).error ||
+    (jobReminders as { error?: string }).error;
   return NextResponse.json(
-    { ok: !failed, members, signinLogs },
+    { ok: !failed, members, signinLogs, jobReminders },
     { status: failed ? 500 : 200 },
   );
 }

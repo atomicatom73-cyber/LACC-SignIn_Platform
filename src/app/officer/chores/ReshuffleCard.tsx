@@ -147,6 +147,15 @@ export function ReshuffleCard({ month }: { month: string }) {
     setOverChoreId(null);
   };
 
+  // Live view of who's left without a job: everyone in the draw minus
+  // whoever currently holds a spot in the (editable) draft.
+  const draftedIds = new Set(
+    (preview?.proposals ?? []).flatMap((p) => p.members.map((m) => m.id)),
+  );
+  const unassigned = (preview?.eligibleMembers ?? []).filter(
+    (m) => !draftedIds.has(m.id),
+  );
+
   const publish = () =>
     startTransition(async () => {
       if (!preview) return;
@@ -172,8 +181,10 @@ export function ReshuffleCard({ month }: { month: string }) {
         <div>
           <h2 className="font-semibold">Monthly reshuffle</h2>
           <p className="mt-0.5 text-xs text-muted">
-            Draft {monthLabel(month)}: skips absences, spends credits, avoids
-            repeats, spreads the load. Nothing is saved until you publish.
+            Draft {monthLabel(month)}: absent and credit-holding members sit
+            this month out (credits are spent, both are back next month),
+            repeats are avoided, and the load is spread by half-month. Nothing
+            is saved until you publish.
           </p>
         </div>
         {!preview && (
@@ -270,15 +281,33 @@ export function ReshuffleCard({ month }: { month: string }) {
             </span>
           )}
 
+          <div className="mt-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted">
+              No job this month
+            </div>
+            {unassigned.length === 0 ? (
+              <p className="mt-1 text-sm text-muted">
+                Everyone in the draw got a job. 🎉
+              </p>
+            ) : (
+              <p className="mt-1 text-sm">
+                {unassigned.map((m) => m.name).join(", ")}
+              </p>
+            )}
+          </div>
           {preview.creditSpends.length > 0 && (
             <p className="mt-3 text-sm">
               <span className="font-medium text-accent">Credits spent:</span>{" "}
-              {preview.creditSpends.map((c) => c.name).join(", ")}
+              {preview.creditSpends.map((c) => c.name).join(", ")}{" "}
+              <span className="text-muted">
+                — one credit each on publish; back in the draw next month.
+              </span>
             </p>
           )}
           {preview.absentNames.length > 0 && (
             <p className="mt-1 text-sm text-muted">
-              Absent (exempt, no credit): {preview.absentNames.join(", ")}
+              Absent (exempt, no credit spent):{" "}
+              {preview.absentNames.join(", ")} — back in the draw next month.
             </p>
           )}
           {preview.warnings.length > 0 && (

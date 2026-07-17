@@ -29,13 +29,19 @@ export default async function KioskPage() {
 
   // Only a has-PIN flag goes to the client — never the PIN itself. Members
   // without a login account can't sign in until they create one (hasAccount).
-  const roster: RosterMember[] = (members ?? []).map((m) => ({
-    id: m.id,
-    full_name: m.full_name,
-    hasPin: Boolean(m.pin),
-    hasAccount: Boolean(m.user_id),
-    openSince: openByMember.get(m.id) ?? null,
-  }));
+  // Whoever's currently in the studio floats to the top (alphabetical within
+  // each group — the query pre-sorts by name and the sort is stable).
+  const roster: RosterMember[] = (members ?? [])
+    .map((m) => ({
+      id: m.id,
+      full_name: m.full_name,
+      hasPin: Boolean(m.pin),
+      hasAccount: Boolean(m.user_id),
+      openSince: openByMember.get(m.id) ?? null,
+    }))
+    .sort(
+      (a, b) => Number(b.openSince !== null) - Number(a.openSince !== null),
+    );
 
   const inCount = roster.filter((m) => m.openSince !== null).length;
 

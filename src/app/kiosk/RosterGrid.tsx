@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { formatDuration } from "@/lib/time";
 import { PasswordInput } from "@/components/PasswordInput";
@@ -25,13 +25,27 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   const [pinError, setPinError] = useState<string | null>(null);
   const pinInputRef = useRef<HTMLInputElement>(null);
 
-  const visible = members.filter((m) =>
+  // Cards flip the moment they're tapped; the server round-trip (and the
+  // roster refresh it triggers) settles the real state behind the scenes,
+  // and a failed toggle just snaps back.
+  const [optimisticMembers, flipOptimistic] = useOptimistic(
+    members,
+    (current, memberId: string) =>
+      current.map((m) =>
+        m.id === memberId
+          ? { ...m, openSince: m.openSince ? null : new Date().toISOString() }
+          : m,
+      ),
+  );
+
+  const visible = optimisticMembers.filter((m) =>
     m.full_name.toLowerCase().includes(query.trim().toLowerCase()),
   );
 
   function run(member: RosterMember, pinValue: string) {
     setBusyId(member.id);
     startTransition(async () => {
+      flipOptimistic(member.id);
       try {
         // The server action calls revalidatePath("/kiosk"), which refreshes
         // the roster automatically — no router.refresh() needed.

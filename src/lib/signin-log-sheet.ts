@@ -252,7 +252,14 @@ export async function exportSigninLogs(): Promise<SigninLogExportResult> {
       out: s.session_type === "open_studio" ? s.signed_out_at : null,
       name: s.student_name,
       type: "Student" as const,
-      details: s.class_label,
+      // Open-studio rows carry the class the visit comes with; legacy rows
+      // stored the literal "Open studio" and shouldn't double up.
+      details:
+        s.session_type === "open_studio"
+          ? s.class_label && s.class_label !== "Open studio"
+            ? `Open studio · ${s.class_label}`
+            : "Open studio"
+          : s.class_label,
       source: "",
     })),
   ].sort((a, b) => a.at.localeCompare(b.at));

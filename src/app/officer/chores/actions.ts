@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
 import { generateMonthlyDraft } from "@/lib/chore-algorithm";
 import { addMonths, monthLabel } from "@/lib/studio";
+import type { ChoreInterval } from "@/lib/types";
 
 /** Result shape shared by the useActionState forms on this page. */
 export type FormState = { error?: string; success?: string } | null;
@@ -18,6 +19,16 @@ function parseSlots(raw: FormDataEntryValue | null): number | { error: string } 
   return slots;
 }
 
+function parseInterval(
+  raw: FormDataEntryValue | null,
+): ChoreInterval | { error: string } {
+  const value = String(raw ?? "month");
+  if (value === "month" || value === "first_half" || value === "second_half") {
+    return value;
+  }
+  return { error: "Pick a valid interval." };
+}
+
 /** Add a job to the catalog (officers with the jobs permission). */
 export async function createChore(
   _prev: FormState,
@@ -30,11 +41,14 @@ export async function createChore(
   const description = String(formData.get("description") ?? "").trim();
   const slots = parseSlots(formData.get("slots"));
   if (typeof slots !== "number") return slots;
+  const interval = parseInterval(formData.get("interval"));
+  if (typeof interval !== "string") return interval;
 
   const { error } = await supabase.from("chores").insert({
     name,
     description: description || null,
     slots,
+    interval,
   });
   if (error) {
     if (error.code === "23505") {
@@ -61,10 +75,12 @@ export async function updateChore(
   const description = String(formData.get("description") ?? "").trim();
   const slots = parseSlots(formData.get("slots"));
   if (typeof slots !== "number") return slots;
+  const interval = parseInterval(formData.get("interval"));
+  if (typeof interval !== "string") return interval;
 
   const { error } = await supabase
     .from("chores")
-    .update({ name, description: description || null, slots })
+    .update({ name, description: description || null, slots, interval })
     .eq("id", choreId);
   if (error) {
     if (error.code === "23505") {
@@ -92,6 +108,60 @@ export async function deleteChore(
   revalidatePath("/officer/chores");
   revalidatePath("/officer/members");
   return null;
+}
+
+/** Pause / unpause a job. Paused jobs sit out assignment until unpaused. */
+export async function setChorePaused(
+  choreId: string,
+  paused: boolean,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!choreId) return { error: "Missing job." };
+
+  const { error } = await supabase
+    .from("chores")
+    .update({ paused })
+    .eq("id", choreId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/** Duplicate a job — identical description, slots, and interval. */
+export async function duplicateChore(
+  choreId: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!choreId) return { error: "Missing job." };
+
+  const { data: chore, error: fetchError } = await supabase
+    .from("chores")
+    .select("name, description, slots, interval, paused")
+    .eq("id", choreId)
+    .maybeSingle();
+  if (fetchError) return { error: fetchError.message };
+  if (!chore) return { error: "Job not found." };
+
+  // chores.name is unique — walk "X (copy)", "X (copy 2)", … until one fits.
+  for (let n = 1; n <= 20; n++) {
+    const name = n === 1 ? `${chore.name} (copy)` : `${chore.name} (copy ${n})`;
+    const { error } = await supabase.from("chores").insert({
+      name,
+      description: chore.description,
+      slots: chore.slots,
+      interval: chore.interval,
+      paused: chore.paused,
+    });
+    if (!error) {
+      revalidatePath("/officer/chores");
+      return null;
+    }
+    if (error.code !== "23505") return { error: error.message };
+  }
+  return { error: "Too many copies of this job already exist." };
 }
 
 /** Manually assign a job to a member for a month (officers with the jobs permission). */
@@ -177,6 +247,9 @@ export type ReshufflePreview = {
   }[];
   creditSpends: { id: string; name: string }[];
   absentNames: string[];
+  /** Everyone who was in the draw (not absent, no credit) — the UI diffs
+   *  this against the edited draft to show who's left without a job. */
+  eligibleMembers: { id: string; name: string }[];
   warnings: string[];
   existingCount: number;
 };
@@ -197,8 +270,9 @@ export async function previewReshuffle(
     await Promise.all([
       supabase
         .from("chores")
-        .select("id, name, slots")
+        .select("id, name, slots, interval")
         .eq("active", true)
+        .eq("paused", false)
         .order("name", { ascending: true }),
       supabase
         .from("members")
@@ -229,7 +303,7 @@ export async function previewReshuffle(
   const chores = choresRes.data ?? [];
   const members = membersRes.data ?? [];
   if (chores.length === 0) {
-    return { error: "No active jobs in the catalog — add some first." };
+    return { error: "No unpaused jobs in the list — add or unpause some first." };
   }
   if (members.length === 0) {
     return { error: "No active members to assign jobs to." };
@@ -265,6 +339,13 @@ export async function previewReshuffle(
         name: nameOf.get(id) ?? "Unknown member",
       })),
       absentNames: draft.exemptAbsent.map((id) => nameOf.get(id) ?? "Unknown"),
+      eligibleMembers: members
+        .filter(
+          (m) =>
+            !draft.exemptAbsent.includes(m.id) &&
+            !draft.creditsToConsume.includes(m.id),
+        )
+        .map((m) => ({ id: m.id, name: m.full_name })),
       warnings: draft.warnings,
       existingCount: existingRes.count ?? 0,
     },

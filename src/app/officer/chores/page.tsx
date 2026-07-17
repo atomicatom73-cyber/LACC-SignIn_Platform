@@ -2,8 +2,8 @@ import Link from "next/link";
 import { requireOfficer } from "@/lib/auth";
 import { addMonths, monthKey, monthLabel } from "@/lib/studio";
 import type { Chore } from "@/lib/types";
+import { AddJobForm } from "./AddJobForm";
 import { ChoreBoard, type BoardChore, type PickerMember } from "./ChoreBoard";
-import { CatalogManager } from "./CatalogManager";
 import { ReshuffleCard } from "./ReshuffleCard";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +34,7 @@ export default async function OfficerChoresPage({
     await Promise.all([
       supabase
         .from("chores")
-        .select("id, name, description, slots, active, created_at")
+        .select("id, name, description, slots, active, paused, interval, created_at")
         .order("name", { ascending: true }),
       supabase
         .from("chore_assignments")
@@ -77,8 +77,9 @@ export default async function OfficerChoresPage({
     assigneesByChore.set(a.chore_id, list);
   }
 
-  // The board shows every active chore plus any retired one that still has
-  // assignments this month (so history months render completely).
+  // The board shows every active chore (paused ones included, so they can be
+  // resumed) plus any retired one that still has assignments this month (so
+  // history months render completely).
   const boardChores: BoardChore[] = chores
     .filter((c) => c.active || assigneesByChore.has(c.id))
     .map((c) => ({
@@ -87,6 +88,8 @@ export default async function OfficerChoresPage({
       description: c.description,
       slots: c.slots,
       active: c.active,
+      paused: c.paused,
+      interval: c.interval,
       assignees: assigneesByChore.get(c.id) ?? [],
     }));
 
@@ -109,8 +112,13 @@ export default async function OfficerChoresPage({
         </Link>
       </div>
       <p className="mt-1 text-muted">
-        Assignments, the job catalog, and the monthly reshuffle.
+        The studio&apos;s jobs, this month&apos;s assignments, and the monthly
+        reshuffle.
       </p>
+
+      <div className="mt-5">
+        <AddJobForm />
+      </div>
 
       <nav className="mt-5 flex items-center gap-3">
         <Link
@@ -154,13 +162,6 @@ export default async function OfficerChoresPage({
 
       <section className="mt-5">
         <ChoreBoard month={month} chores={boardChores} members={members} />
-      </section>
-
-      <section className="mt-10">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
-          Job catalog
-        </h2>
-        <CatalogManager chores={chores} />
       </section>
     </main>
   );

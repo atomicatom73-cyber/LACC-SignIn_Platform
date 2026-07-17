@@ -26,12 +26,18 @@ export type Member = {
   sheet_comments: string | null;
 };
 
+/** When during the month a job is due (drives its reminder timing). */
+export type ChoreInterval = "month" | "first_half" | "second_half";
+
 export type Chore = {
   id: string;
   name: string;
   description: string | null;
   slots: number;
   active: boolean;
+  /** Paused jobs sit out assignment (auto and manual) until unpaused. */
+  paused: boolean;
+  interval: ChoreInterval;
   created_at: string;
 };
 

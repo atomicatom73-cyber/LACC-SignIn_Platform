@@ -150,6 +150,37 @@ export function renderAnnouncementEmail(args: {
   `);
 }
 
+/** Email nudging a member about their still-pending job(s) for the month. */
+export function renderJobReminderEmail(args: {
+  name: string;
+  dueText: string; // "July 15" / "the end of July"
+  jobs: { name: string; description: string | null }[];
+  url: string;
+}): string {
+  const name = escapeHtml(args.name.split(" ")[0] || args.name);
+  const jobs = args.jobs
+    .map(
+      (j) => `
+      <div style="border-left:3px solid #c2683a;padding:4px 0 4px 16px;margin:0 0 14px;">
+        <p style="margin:0;font-size:16px;font-weight:700;">${escapeHtml(j.name)}</p>
+        ${
+          j.description
+            ? `<p style="margin:4px 0 0;font-size:14px;line-height:1.5;color:#3d3a35;">${escapeHtml(j.description)}</p>`
+            : ""
+        }
+      </div>`,
+    )
+    .join("");
+  const plural = args.jobs.length === 1 ? "job is" : "jobs are";
+  return shell(`
+    <p style="margin:0 0 4px;font-size:15px;color:#8a8479;">Hi ${name},</p>
+    <p style="margin:0 0 16px;font-size:15px;">Friendly reminder — your studio ${plural} due by <strong>${escapeHtml(args.dueText)}</strong>:</p>
+    ${jobs}
+    <p style="margin:6px 0 20px;font-size:14px;color:#3d3a35;">Already done? Mark it off in the app and you're all set.</p>
+    <p style="margin:0 0 8px;"><a href="${args.url}" style="${BUTTON}">Open LACC Studio</a></p>
+  `);
+}
+
 /**
  * Email sent once, when a member creates their account.
  *

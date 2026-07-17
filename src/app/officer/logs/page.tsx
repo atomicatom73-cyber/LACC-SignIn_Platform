@@ -135,10 +135,18 @@ export default async function SignInLogsPage({
     });
   }
   for (const s of students) {
+    // Open-studio rows carry the class the visit comes with; legacy rows
+    // stored the literal "Open studio" and shouldn't double up.
+    const label =
+      s.session_type === "open_studio"
+        ? s.class_label && s.class_label !== "Open studio"
+          ? `Open studio · ${s.class_label}`
+          : "Open studio"
+        : s.class_label;
     push({
       at: s.signed_in_at,
       kind: "student",
-      title: `${s.student_name} — ${s.class_label}`,
+      title: `${s.student_name} — ${label}`,
       // Class students are presence-only; open-studio visits get an out time.
       detail:
         s.session_type === "open_studio"

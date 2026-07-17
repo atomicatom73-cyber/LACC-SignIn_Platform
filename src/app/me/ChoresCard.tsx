@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useOptimistic, useState, useTransition } from "react";
+import { dueLabel } from "@/lib/chores";
 import { monthLabel } from "@/lib/studio";
+import type { ChoreInterval } from "@/lib/types";
 import { toggleMyChore } from "./actions";
 
 export type MyChore = {
@@ -10,6 +12,7 @@ export type MyChore = {
   status: "pending" | "completed";
   choreName: string;
   choreDescription: string | null;
+  choreInterval: ChoreInterval;
 };
 
 export function ChoresCard({
@@ -27,10 +30,25 @@ export function ChoresCard({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // The card flips instantly; the server settles it (and a failure reverts).
+  const [optimisticChores, flipOptimistic] = useOptimistic(
+    chores,
+    (current, id: string) =>
+      current.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              status: c.status === "completed" ? "pending" : "completed",
+            }
+          : c,
+      ),
+  );
+
   function handleToggle(id: string) {
     setBusyId(id);
     setError(null);
     startTransition(async () => {
+      flipOptimistic(id);
       const res = await toggleMyChore(id);
       if (res?.error) setError(res.error);
       setBusyId(null);
@@ -56,7 +74,7 @@ export function ChoresCard({
         </p>
       )}
 
-      {chores.length === 0 ? (
+      {optimisticChores.length === 0 ? (
         !absentThisMonth && (
           <p className="mt-3 text-sm text-muted">
             No jobs assigned right now. Enjoy the wheel! 🏺
@@ -64,7 +82,7 @@ export function ChoresCard({
         )
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
-          {chores.map((c) => {
+          {optimisticChores.map((c) => {
             const done = c.status === "completed";
             const carried = c.month < currentMonth;
             return (
@@ -86,6 +104,11 @@ export function ChoresCard({
                     {carried && (
                       <span className="rounded-full border border-danger/40 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger">
                         from {monthLabel(c.month)}
+                      </span>
+                    )}
+                    {!done && !carried && (
+                      <span className="rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                        {dueLabel(c.choreInterval)}
                       </span>
                     )}
                   </div>

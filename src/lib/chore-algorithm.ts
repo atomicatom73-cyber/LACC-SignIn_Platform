@@ -4,11 +4,28 @@
  * Deterministic: the PRNG is seeded from `targetMonth`, and all inputs are
  * pre-sorted by id before shuffling, so regenerating the same month always
  * produces the identical draft regardless of database row order.
+ *
+ * Exemptions are decided up front: absent members are skipped for free, and
+ * every member holding an unused credit sits the whole month out (one credit
+ * is spent at publish time). Both are back in the rotation next month.
+ *
+ * Load is balanced per half-month window. A `month` chore occupies both
+ * halves; `first_half` / `second_half` chores occupy only theirs, so one
+ * member can hold a first-half AND a second-half job without it counting as
+ * a double-up. Nobody gets a second job in the same window until everyone
+ * available has work in that window.
  */
+
+export type ChoreWindowInterval = "month" | "first_half" | "second_half";
 
 export type DraftInput = {
   targetMonth: string; // "YYYY-MM-01"
-  chores: { id: string; name: string; slots: number }[];
+  chores: {
+    id: string;
+    name: string;
+    slots: number;
+    interval: ChoreWindowInterval;
+  }[]; // active + unpaused
   members: { id: string; full_name: string }[]; // active, role='member'
   prevAssignments: { chore_id: string; member_id: string }[]; // targetMonth - 1
   absentMemberIds: string[]; // absences(targetMonth)
@@ -19,6 +36,7 @@ export type Draft = {
   proposals: { chore_id: string; member_ids: string[] }[];
   creditsToConsume: string[]; // member ids spared by spending a credit
   exemptAbsent: string[];
+  unassigned: string[]; // eligible members who ended up with no job
   warnings: string[];
 };
 
@@ -55,18 +73,31 @@ function seededShuffle<T>(items: readonly T[], rand: () => number): T[] {
 
 const pairKey = (choreId: string, memberId: string) => `${choreId}:${memberId}`;
 
+/** The half-month windows an interval occupies. */
+function windowsOf(interval: ChoreWindowInterval): ("first" | "second")[] {
+  if (interval === "first_half") return ["first"];
+  if (interval === "second_half") return ["second"];
+  return ["first", "second"];
+}
+
 export function generateMonthlyDraft(input: DraftInput): Draft {
   const rand = mulberry32(hashString(input.targetMonth));
   const warnings: string[] = [];
 
   const absent = new Set(input.absentMemberIds);
-  const creditAvailable = new Set(input.creditAvailableMemberIds);
-  const creditsToConsume: string[] = [];
+  const creditHolders = new Set(input.creditAvailableMemberIds);
 
   // Absent members are exempt outright — no credit is spent on them.
   const exemptAbsent = input.members
     .filter((m) => absent.has(m.id))
     .map((m) => m.id);
+
+  // Everyone else holding a credit sits the whole month out; the publish
+  // step spends one credit each, so they're back in next month's pool.
+  const creditsToConsume = input.members
+    .filter((m) => !absent.has(m.id) && creditHolders.has(m.id))
+    .map((m) => m.id);
+  const creditExempt = new Set(creditsToConsume);
 
   // Previous-month workload count and (chore, member) pairs for the
   // "no one gets the same chore as the previous month" rule.
@@ -77,51 +108,58 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
     prevPairs.add(pairKey(a.chore_id, a.member_id));
   }
 
-  // Candidate pool: non-absent members, seeded-shuffled, then stably sorted
-  // so people who did chores last month rotate to the back this month.
+  // Candidate pool: non-absent, non-credit members, seeded-shuffled, then
+  // stably sorted so people who did chores last month rotate to the back.
   const pool = seededShuffle(
     input.members
-      .filter((m) => !absent.has(m.id))
+      .filter((m) => !absent.has(m.id) && !creditExempt.has(m.id))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     rand,
   ).sort((a, b) => (prevCount.get(a.id) ?? 0) - (prevCount.get(b.id) ?? 0));
 
-  const chores = seededShuffle(
+  // Month-long chores are the most constrained (they occupy both windows),
+  // so they draw first; half-month chores fill the gaps around them.
+  const shuffled = seededShuffle(
     input.chores
       .filter((c) => c.slots > 0)
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     rand,
   );
+  const chores = [
+    ...shuffled.filter((c) => c.interval === "month"),
+    ...shuffled.filter((c) => c.interval !== "month"),
+  ];
 
-  // How many chores each member has in THIS draft.
+  // Per-member load in THIS draft: total jobs and which windows are taken.
   const assignedCount = new Map<string, number>();
+  const busyWindows = new Map<string, Set<"first" | "second">>();
   const proposalByChore = new Map<string, string[]>();
   for (const chore of chores) proposalByChore.set(chore.id, []);
 
+  type Mode = "fresh" | "window-free" | "any";
+
   /**
-   * Walk the pool for the next eligible candidate. A candidate who would be
-   * picked but holds an unused credit spends it instead: they leave the pool
-   * for the whole month and the walk continues.
+   * Walk the pool for the next eligible candidate.
+   *  - fresh:       nobody with a job yet — spread the load first.
+   *  - window-free: may already work the OTHER half of the month, but the
+   *                 chore's own window(s) are open. Not a double-up.
+   *  - any:         last resort — a second job in the same window.
    */
   const takeCandidate = (
-    chore: { id: string; name: string },
+    chore: { id: string; interval: ChoreWindowInterval },
     current: string[],
-    firstChoreOnly: boolean,
+    mode: Mode,
   ): { id: string; full_name: string } | null => {
-    for (let i = 0; i < pool.length; i++) {
-      const candidate = pool[i];
-      if (firstChoreOnly && (assignedCount.get(candidate.id) ?? 0) > 0) continue;
+    const wanted = windowsOf(chore.interval);
+    for (const candidate of pool) {
       if (prevPairs.has(pairKey(chore.id, candidate.id))) continue;
       if (current.includes(candidate.id)) continue;
-      if (creditAvailable.has(candidate.id)) {
-        creditAvailable.delete(candidate.id);
-        creditsToConsume.push(candidate.id);
-        pool.splice(i, 1);
-        i -= 1;
-        warnings.push(
-          `${candidate.full_name} is sitting this month out on a job credit.`,
-        );
+      if (mode === "fresh" && (assignedCount.get(candidate.id) ?? 0) > 0) {
         continue;
+      }
+      if (mode !== "any") {
+        const busy = busyWindows.get(candidate.id);
+        if (busy && wanted.some((w) => busy.has(w))) continue;
       }
       return candidate;
     }
@@ -131,26 +169,26 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
   for (const chore of chores) {
     const memberIds = proposalByChore.get(chore.id)!;
     for (let slot = 1; slot <= chore.slots; slot++) {
-      let pick = takeCandidate(chore, memberIds, true);
-
+      let pick = takeCandidate(chore, memberIds, "fresh");
       if (!pick) {
-        // Only hand out a second chore once every available member has one.
-        const someoneStillFree = pool.some(
-          (m) => (assignedCount.get(m.id) ?? 0) === 0,
-        );
-        if (!someoneStillFree) {
-          pick = takeCandidate(chore, memberIds, false);
-          if (pick) {
-            warnings.push(
-              `${pick.full_name} got a second job (${chore.name}) — everyone available already has one.`,
-            );
-          }
+        // Everyone free already has a job — cross-window seconds are fine.
+        pick = takeCandidate(chore, memberIds, "window-free");
+      }
+      if (!pick) {
+        pick = takeCandidate(chore, memberIds, "any");
+        if (pick) {
+          warnings.push(
+            `${pick.full_name} got a second job in the same half of the month (${chore.name}) — everyone available already has one there.`,
+          );
         }
       }
 
       if (pick) {
         memberIds.push(pick.id);
         assignedCount.set(pick.id, (assignedCount.get(pick.id) ?? 0) + 1);
+        const busy = busyWindows.get(pick.id) ?? new Set();
+        for (const w of windowsOf(chore.interval)) busy.add(w);
+        busyWindows.set(pick.id, busy);
       } else {
         warnings.push(
           `Couldn't fill slot ${slot} of ${chore.name} — everyone left had it last month. Assign manually.`,
@@ -159,10 +197,20 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
     }
   }
 
+  const unassigned = pool
+    .filter((m) => (assignedCount.get(m.id) ?? 0) === 0)
+    .map((m) => m.id);
+
   // Return proposals in the caller's chore order for stable display.
   const proposals = input.chores
     .filter((c) => c.slots > 0)
     .map((c) => ({ chore_id: c.id, member_ids: proposalByChore.get(c.id) ?? [] }));
 
-  return { proposals, creditsToConsume, exemptAbsent, warnings };
+  return {
+    proposals,
+    creditsToConsume,
+    exemptAbsent,
+    unassigned,
+    warnings,
+  };
 }

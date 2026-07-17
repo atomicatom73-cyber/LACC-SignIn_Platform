@@ -169,6 +169,22 @@ create table if not exists public.chores (
   created_at  timestamptz not null default now()
 );
 
+-- Paused jobs keep their history but sit out the auto-assign (and manual
+-- assigning) until an officer unpauses them.
+alter table public.chores
+  add column if not exists paused boolean not null default false;
+
+-- When during the month the job is due: full month (due end of month),
+-- first half (due the 15th), or second half (due end of month). Drives the
+-- reminder schedule. Quoted: unquoted `interval` can parse as an INTERVAL
+-- literal inside expressions.
+alter table public.chores
+  add column if not exists "interval" text not null default 'month';
+
+alter table public.chores drop constraint if exists chores_interval_check;
+alter table public.chores add constraint chores_interval_check
+  check ("interval" in ('month', 'first_half', 'second_half'));
+
 -- A chore given to a member for a calendar month (`month` = first of month).
 -- Completed chores fall off the member's profile once the month ends;
 -- incomplete ones keep showing until they're done.
