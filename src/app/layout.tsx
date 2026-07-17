@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Analytics } from "@vercel/analytics/next";
 import { SessionKeeper } from "@/components/SessionKeeper";
 import { InstallPrompt } from "@/components/InstallPrompt";
 
@@ -53,6 +54,7 @@ export default function RootLayout({
         <SessionKeeper />
         {children}
         <InstallPrompt />
+        <Analytics />
       </body>
     </html>
   );
