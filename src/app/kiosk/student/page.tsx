@@ -5,8 +5,22 @@ import { StudentForm, type OpenStudioSession } from "./StudentForm";
 
 export const dynamic = "force-dynamic";
 
-/** Student sign-in for class attendees and open-studio visitors — no account needed. */
-export default async function KioskStudentPage() {
+/**
+ * Student sign-in for class attendees and open-studio visitors — no account
+ * needed. Reached from the kiosk iPad and from a member's own account page;
+ * `?from=me` sends them back to /me instead of the kiosk, so a member who
+ * signs in as a student isn't dumped on the quick sign-in screen.
+ */
+export default async function KioskStudentPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string }>;
+}) {
+  const { from } = await searchParams;
+  const fromAccount = from === "me";
+  const backHref = fromAccount ? "/me" : "/kiosk";
+  const backLabel = fromAccount ? "← Back to my account" : "← Back to quick sign in";
+
   const supabase = createAdminClient();
 
   // Anyone who forgot to sign out stays signed in until end of that day.
@@ -23,8 +37,8 @@ export default async function KioskStudentPage() {
 
   return (
     <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-md flex-col px-5 py-6">
-      <Link href="/kiosk" className="inline-block text-sm text-muted">
-        ← Back to quick sign in
+      <Link href={backHref} className="inline-block text-sm text-muted">
+        {backLabel}
       </Link>
 
       <div className="mb-6 mt-6 flex flex-col items-center text-center">
@@ -37,7 +51,7 @@ export default async function KioskStudentPage() {
         </p>
       </div>
 
-      <StudentForm openSessions={openSessions} />
+      <StudentForm openSessions={openSessions} doneHref={backHref} />
     </main>
   );
 }

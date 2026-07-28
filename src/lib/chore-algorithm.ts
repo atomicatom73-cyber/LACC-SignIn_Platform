@@ -5,9 +5,11 @@
  * pre-sorted by id before shuffling, so regenerating the same month always
  * produces the identical draft regardless of database row order.
  *
- * Exemptions are decided up front: absent members are skipped for free, and
- * every member holding an unused credit sits the whole month out (one credit
- * is spent at publish time). Both are back in the rotation next month.
+ * Exemptions are decided up front: board officers and absent members are
+ * skipped for free, and every member holding an unused credit sits the whole
+ * month out (one credit is spent at publish time). Absences and credits are
+ * back in the rotation next month; officers stay out until the president
+ * unticks their officer status.
  *
  * Load is balanced per half-month window. A `month` chore occupies both
  * halves; `first_half` / `second_half` chores occupy only theirs, so one
@@ -30,12 +32,14 @@ export type DraftInput = {
   prevAssignments: { chore_id: string; member_id: string }[]; // targetMonth - 1
   absentMemberIds: string[]; // absences(targetMonth)
   creditAvailableMemberIds: string[]; // members with ≥1 unused credit
+  officerMemberIds: string[]; // members.officer_status — exempt, no credit
 };
 
 export type Draft = {
   proposals: { chore_id: string; member_ids: string[] }[];
   creditsToConsume: string[]; // member ids spared by spending a credit
   exemptAbsent: string[];
+  exemptOfficers: string[];
   unassigned: string[]; // eligible members who ended up with no job
   warnings: string[];
 };
@@ -86,16 +90,23 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
 
   const absent = new Set(input.absentMemberIds);
   const creditHolders = new Set(input.creditAvailableMemberIds);
+  const officers = new Set(input.officerMemberIds);
+
+  // Board officers are exempt for as long as they hold the status — checked
+  // first so an officer never burns a credit or shows up as "absent".
+  const exemptOfficers = input.members
+    .filter((m) => officers.has(m.id))
+    .map((m) => m.id);
 
   // Absent members are exempt outright — no credit is spent on them.
   const exemptAbsent = input.members
-    .filter((m) => absent.has(m.id))
+    .filter((m) => !officers.has(m.id) && absent.has(m.id))
     .map((m) => m.id);
 
   // Everyone else holding a credit sits the whole month out; the publish
   // step spends one credit each, so they're back in next month's pool.
   const creditsToConsume = input.members
-    .filter((m) => !absent.has(m.id) && creditHolders.has(m.id))
+    .filter((m) => !officers.has(m.id) && !absent.has(m.id) && creditHolders.has(m.id))
     .map((m) => m.id);
   const creditExempt = new Set(creditsToConsume);
 
@@ -112,7 +123,10 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
   // stably sorted so people who did chores last month rotate to the back.
   const pool = seededShuffle(
     input.members
-      .filter((m) => !absent.has(m.id) && !creditExempt.has(m.id))
+      .filter(
+        (m) =>
+          !officers.has(m.id) && !absent.has(m.id) && !creditExempt.has(m.id),
+      )
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     rand,
   ).sort((a, b) => (prevCount.get(a.id) ?? 0) - (prevCount.get(b.id) ?? 0));
@@ -210,6 +224,7 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
     proposals,
     creditsToConsume,
     exemptAbsent,
+    exemptOfficers,
     unassigned,
     warnings,
   };

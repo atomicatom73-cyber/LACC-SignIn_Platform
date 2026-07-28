@@ -9,11 +9,14 @@ import {
 } from "react";
 import type { ChoreInterval } from "@/lib/types";
 import { INTERVAL_OPTIONS, intervalBadge } from "@/lib/chores";
+import { formatStudioDateTime, studioDateTimeParts } from "@/lib/studio";
+import { SchedulingToggle } from "./SchedulingToggle";
 import {
   assignChore,
   deleteChore,
   duplicateChore,
   removeAssignment,
+  setAssignmentSchedule,
   setAssignmentStatus,
   setChorePaused,
   updateChore,
@@ -24,6 +27,8 @@ export type BoardAssignee = {
   memberId: string;
   memberName: string;
   status: "pending" | "completed";
+  /** When they said they'd do it; only shown for scheduled jobs. */
+  scheduledAt: string | null;
 };
 
 export type BoardChore = {
@@ -34,10 +39,16 @@ export type BoardChore = {
   active: boolean;
   paused: boolean;
   interval: ChoreInterval;
+  /** Invites whoever holds it to pick a date and time. */
+  schedulingEnabled: boolean;
   assignees: BoardAssignee[];
 };
 
-export type PickerMember = { id: string; full_name: string };
+export type PickerMember = {
+  id: string;
+  full_name: string;
+  officer_status: boolean;
+};
 
 /**
  * The month's jobs, one card per job. Each card carries both the month's
@@ -191,11 +202,18 @@ function ChoreCard({
             </span>
           </span>
         </div>
-        {badge && (
-          <span className="mt-1 inline-block rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-            {badge}
-          </span>
-        )}
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {badge && (
+            <span className="inline-block rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              {badge}
+            </span>
+          )}
+          {chore.schedulingEnabled && (
+            <span className="inline-block rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+              🗓 scheduled
+            </span>
+          )}
+        </div>
         {chore.description && (
           <p className="mt-1 text-xs text-muted">{chore.description}</p>
         )}
@@ -216,37 +234,47 @@ function ChoreCard({
               return (
                 <li
                   key={a.assignmentId}
-                  className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 ${
+                  className={`rounded-xl border px-3 py-2 ${
                     done
                       ? "border-success/40 bg-success/10"
                       : "border-border bg-surface-2"
                   }`}
                 >
-                  <span
-                    className={`min-w-0 truncate text-sm font-medium ${done ? "line-through opacity-70" : ""}`}
-                  >
-                    {a.memberName}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-1.5">
-                    <button
-                      onClick={() => toggleStatus(a)}
-                      disabled={pending}
-                      className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition active:scale-[0.97] disabled:opacity-60 ${
-                        done
-                          ? "border border-border bg-surface text-muted"
-                          : "bg-success text-background"
-                      }`}
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`min-w-0 truncate text-sm font-medium ${done ? "line-through opacity-70" : ""}`}
                     >
-                      {done ? "Undo" : "Done ✓"}
-                    </button>
-                    <button
-                      onClick={() => run(() => removeAssignment(a.assignmentId))}
-                      disabled={pending}
-                      className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-danger transition active:scale-[0.97] disabled:opacity-60"
-                    >
-                      ✕
-                    </button>
-                  </span>
+                      {a.memberName}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        onClick={() => toggleStatus(a)}
+                        disabled={pending}
+                        className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition active:scale-[0.97] disabled:opacity-60 ${
+                          done
+                            ? "border border-border bg-surface text-muted"
+                            : "bg-success text-background"
+                        }`}
+                      >
+                        {done ? "Undo" : "Done ✓"}
+                      </button>
+                      <button
+                        onClick={() =>
+                          run(() => removeAssignment(a.assignmentId))
+                        }
+                        disabled={pending}
+                        className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-danger transition active:scale-[0.97] disabled:opacity-60"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  </div>
+                  {chore.schedulingEnabled && (
+                    <ScheduleEditor
+                      assignmentId={a.assignmentId}
+                      scheduledAt={a.scheduledAt}
+                    />
+                  )}
                 </li>
               );
             })}
@@ -269,6 +297,7 @@ function ChoreCard({
               {candidates.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.full_name}
+                  {m.officer_status ? " · officer" : ""}
                 </option>
               ))}
             </select>
@@ -361,6 +390,7 @@ function ChoreCard({
             placeholder="Description (optional)"
             className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
           />
+          <SchedulingToggle defaultChecked={chore.schedulingEnabled} />
           <button
             type="submit"
             disabled={editPending}
@@ -377,5 +407,107 @@ function ChoreCard({
         </p>
       )}
     </section>
+  );
+}
+
+const SCHEDULE_INPUT =
+  "min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs outline-none focus:border-accent";
+
+/**
+ * When this member will do the job — officers set or clear it here; the member
+ * picks their own from /me. Collapsed to a line of text until it's tapped, so
+ * a card with four assignees doesn't turn into a wall of date pickers.
+ */
+function ScheduleEditor({
+  assignmentId,
+  scheduledAt,
+}: {
+  assignmentId: string;
+  scheduledAt: string | null;
+}) {
+  const initial = scheduledAt
+    ? studioDateTimeParts(scheduledAt)
+    : { date: "", time: "" };
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(initial.date);
+  const [time, setTime] = useState(initial.time);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const save = (nextDate: string, nextTime: string) => {
+    setDate(nextDate);
+    setTime(nextTime);
+    startTransition(async () => {
+      const res = await setAssignmentSchedule(assignmentId, nextDate, nextTime);
+      if (res?.error) {
+        setError(res.error);
+      } else {
+        setError(null);
+        setOpen(false);
+      }
+    });
+  };
+
+  if (!open) {
+    return (
+      <div className="mt-1.5 flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-xs text-muted">
+          {scheduledAt
+            ? `🗓 ${formatStudioDateTime(scheduledAt)}`
+            : "🗓 No time picked yet"}
+        </span>
+        <button
+          onClick={() => setOpen(true)}
+          className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] font-medium text-muted transition active:scale-[0.97]"
+        >
+          {scheduledAt ? "Change" : "Set time"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className={SCHEDULE_INPUT}
+          aria-label="Date"
+        />
+        <input
+          type="time"
+          value={time}
+          onChange={(e) => setTime(e.target.value)}
+          className={SCHEDULE_INPUT}
+          aria-label="Time"
+        />
+        <button
+          onClick={() => save(date, time)}
+          disabled={pending || !date}
+          className="shrink-0 rounded-lg border border-accent/40 bg-accent/10 px-2 py-1.5 text-[11px] font-semibold text-accent transition active:scale-[0.97] disabled:opacity-60"
+        >
+          {pending ? "…" : "Save"}
+        </button>
+        {scheduledAt && (
+          <button
+            onClick={() => save("", "")}
+            disabled={pending}
+            className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] font-medium text-danger transition active:scale-[0.97] disabled:opacity-60"
+          >
+            Clear
+          </button>
+        )}
+        <button
+          onClick={() => setOpen(false)}
+          disabled={pending}
+          className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] font-medium text-muted transition active:scale-[0.97] disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
+    </div>
   );
 }

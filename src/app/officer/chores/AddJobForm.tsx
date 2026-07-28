@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import { INTERVAL_OPTIONS } from "@/lib/chores";
+import { SchedulingToggle } from "./SchedulingToggle";
 import { createChore } from "./actions";
 
 /** "＋ Add a job" at the top of the jobs page — expands into the form. */
@@ -89,6 +90,7 @@ export function AddJobForm() {
           placeholder="Description (optional)"
           className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
         />
+        <SchedulingToggle />
         <button
           type="submit"
           disabled={pending}

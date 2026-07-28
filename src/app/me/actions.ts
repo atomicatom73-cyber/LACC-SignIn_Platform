@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { parseSchedule } from "@/lib/chores";
 import { requestSigninLogExport } from "@/lib/signin-log-sheet";
 
 /** Toggle the current user's shift: clock in if out, clock out if in. */
@@ -84,6 +85,43 @@ export async function toggleMyChore(assignmentId: string) {
       completed_at: completing ? new Date().toISOString() : null,
     })
     .eq("id", assignment.id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/me");
+  return null;
+}
+
+/**
+ * Say when you'll do one of your jobs (jobs whose `scheduling_enabled` is on).
+ * A blank date clears it. RLS + protect_assignment_update keep this to the
+ * member's own rows and to the scheduled_at column.
+ */
+export async function setMyChoreSchedule(
+  assignmentId: string,
+  date: string,
+  time: string,
+): Promise<{ error: string } | null> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: member } = await supabase
+    .from("members")
+    .select("id")
+    .eq("user_id", user.id)
+    .single();
+  if (!member) return { error: "No member profile found." };
+
+  const scheduled = parseSchedule(date, time);
+  if (typeof scheduled !== "string" && scheduled !== null) return scheduled;
+
+  const { error } = await supabase
+    .from("chore_assignments")
+    .update({ scheduled_at: scheduled })
+    .eq("id", assignmentId)
+    .eq("member_id", member.id);
   if (error) return { error: error.message };
 
   revalidatePath("/me");

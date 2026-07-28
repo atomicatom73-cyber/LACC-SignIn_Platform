@@ -14,8 +14,12 @@ type AssignmentRow = {
   chore_id: string;
   member_id: string;
   status: "pending" | "completed";
+  scheduled_at: string | null;
   members: { full_name: string } | null;
 };
+
+/** How many months ahead the reshuffle picker lets you plan. */
+const PLANNING_MONTHS = 12;
 
 export default async function OfficerChoresPage({
   searchParams,
@@ -34,20 +38,22 @@ export default async function OfficerChoresPage({
     await Promise.all([
       supabase
         .from("chores")
-        .select("id, name, description, slots, active, paused, interval, created_at")
+        .select(
+          "id, name, description, slots, active, paused, interval, scheduling_enabled, created_at",
+        )
         .order("name", { ascending: true }),
       supabase
         .from("chore_assignments")
         // members!…: both member_id and assigned_by reference members, so the
         // embed must name its FK or PostgREST rejects it as ambiguous.
         .select(
-          "id, chore_id, member_id, status, members!chore_assignments_member_id_fkey(full_name)",
+          "id, chore_id, member_id, status, scheduled_at, members!chore_assignments_member_id_fkey(full_name)",
         )
         .eq("month", month)
         .order("created_at", { ascending: true }),
       supabase
         .from("members")
-        .select("id, full_name")
+        .select("id, full_name, officer_status")
         .eq("role", "member")
         .eq("active", true)
         .order("full_name", { ascending: true }),
@@ -73,6 +79,7 @@ export default async function OfficerChoresPage({
       memberId: a.member_id,
       memberName: a.members?.full_name ?? "Unknown member",
       status: a.status,
+      scheduledAt: a.scheduled_at,
     });
     assigneesByChore.set(a.chore_id, list);
   }
@@ -90,12 +97,41 @@ export default async function OfficerChoresPage({
       active: c.active,
       paused: c.paused,
       interval: c.interval,
+      schedulingEnabled: c.scheduling_enabled,
       assignees: assigneesByChore.get(c.id) ?? [],
     }));
 
   const absentNames = absences
     .map((a) => a.members?.full_name ?? "Unknown member")
     .sort((a, b) => a.localeCompare(b));
+
+  const officerNames = members
+    .filter((m) => m.officer_status)
+    .map((m) => m.full_name);
+
+  // Coverage for the reshuffle card's chart, before any draft: everyone in the
+  // rotation (officers sit out) and how many jobs they hold this month.
+  const jobsPerMember = new Map<string, number>();
+  for (const a of assignments) {
+    jobsPerMember.set(a.member_id, (jobsPerMember.get(a.member_id) ?? 0) + 1);
+  }
+  const published = members
+    .filter((m) => !m.officer_status)
+    .map((m) => ({
+      id: m.id,
+      name: m.full_name,
+      jobs: jobsPerMember.get(m.id) ?? 0,
+    }));
+
+  const planningMonths = Array.from({ length: PLANNING_MONTHS }, (_, i) =>
+    addMonths(currentMonth, i),
+  );
+  // A month reached by the arrows can sit outside the picker's range; keep it
+  // selectable so the <select> never renders a value it doesn't have.
+  if (!planningMonths.includes(month)) {
+    planningMonths.push(month);
+    planningMonths.sort();
+  }
 
   const prev = addMonths(month, -1).slice(0, 7);
   const next = addMonths(month, 1).slice(0, 7);
@@ -147,7 +183,12 @@ export default async function OfficerChoresPage({
 
       {month >= currentMonth && (
         <div className="mt-5">
-          <ReshuffleCard key={month} month={month} />
+          <ReshuffleCard
+            key={month}
+            month={month}
+            months={planningMonths}
+            published={published}
+          />
         </div>
       )}
 
@@ -157,6 +198,15 @@ export default async function OfficerChoresPage({
             Absent {monthLabel(month)}:
           </span>{" "}
           {absentNames.join(", ")}
+        </p>
+      )}
+
+      {officerNames.length > 0 && (
+        <p className="mt-2 text-sm text-muted">
+          <span className="font-medium text-foreground">
+            Officers (exempt from jobs):
+          </span>{" "}
+          {officerNames.join(", ")}
         </p>
       )}
 

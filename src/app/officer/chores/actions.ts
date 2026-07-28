@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
 import { generateMonthlyDraft } from "@/lib/chore-algorithm";
+import { parseSchedule } from "@/lib/chores";
 import { addMonths, monthLabel } from "@/lib/studio";
 import type { ChoreInterval } from "@/lib/types";
 
@@ -49,6 +50,7 @@ export async function createChore(
     description: description || null,
     slots,
     interval,
+    scheduling_enabled: formData.get("scheduling_enabled") === "on",
   });
   if (error) {
     if (error.code === "23505") {
@@ -80,7 +82,13 @@ export async function updateChore(
 
   const { error } = await supabase
     .from("chores")
-    .update({ name, description: description || null, slots, interval })
+    .update({
+      name,
+      description: description || null,
+      slots,
+      interval,
+      scheduling_enabled: formData.get("scheduling_enabled") === "on",
+    })
     .eq("id", choreId);
   if (error) {
     if (error.code === "23505") {
@@ -139,7 +147,7 @@ export async function duplicateChore(
 
   const { data: chore, error: fetchError } = await supabase
     .from("chores")
-    .select("name, description, slots, interval, paused")
+    .select("name, description, slots, interval, paused, scheduling_enabled")
     .eq("id", choreId)
     .maybeSingle();
   if (fetchError) return { error: fetchError.message };
@@ -154,6 +162,7 @@ export async function duplicateChore(
       slots: chore.slots,
       interval: chore.interval,
       paused: chore.paused,
+      scheduling_enabled: chore.scheduling_enabled,
     });
     if (!error) {
       revalidatePath("/officer/chores");
@@ -214,6 +223,35 @@ export async function removeAssignment(
   return null;
 }
 
+/**
+ * Set (or clear) when the member will do a job — the officer-side twin of
+ * setMyChoreSchedule in /me. Date and time come off the form inputs on the
+ * studio wall clock; an empty date clears the appointment.
+ */
+export async function setAssignmentSchedule(
+  assignmentId: string,
+  date: string,
+  time: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!assignmentId) return { error: "Missing assignment." };
+
+  const scheduled = parseSchedule(date, time);
+  if (typeof scheduled !== "string" && scheduled !== null) return scheduled;
+
+  const { error } = await supabase
+    .from("chore_assignments")
+    .update({ scheduled_at: scheduled })
+    .eq("id", assignmentId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/chores");
+  revalidatePath("/officer/members");
+  revalidatePath("/me");
+  return null;
+}
+
 /** Mark an assignment completed / back to pending (officers with the jobs permission). */
 export async function setAssignmentStatus(
   assignmentId: string,
@@ -243,12 +281,16 @@ export type ReshufflePreview = {
   proposals: {
     choreId: string;
     choreName: string;
+    /** How many people this job wants, for the fill counter on its row. */
+    slots: number;
     members: { id: string; name: string }[];
   }[];
   creditSpends: { id: string; name: string }[];
   absentNames: string[];
-  /** Everyone who was in the draw (not absent, no credit) — the UI diffs
-   *  this against the edited draft to show who's left without a job. */
+  officerNames: string[];
+  /** Everyone who was in the draw (not an officer, absent, or holding a
+   *  credit) — the UI diffs this against the edited draft for the coverage
+   *  chart and the "no job" list. */
   eligibleMembers: { id: string; name: string }[];
   warnings: string[];
   existingCount: number;
@@ -276,7 +318,7 @@ export async function previewReshuffle(
         .order("name", { ascending: true }),
       supabase
         .from("members")
-        .select("id, full_name")
+        .select("id, full_name, officer_status")
         .eq("active", true)
         .eq("role", "member")
         .order("full_name", { ascending: true }),
@@ -318,17 +360,26 @@ export async function previewReshuffle(
     creditAvailableMemberIds: [
       ...new Set((creditsRes.data ?? []).map((c) => c.member_id)),
     ],
+    officerMemberIds: members
+      .filter((m) => m.officer_status)
+      .map((m) => m.id),
   });
 
   const nameOf = new Map(members.map((m) => [m.id, m.full_name]));
-  const choreName = new Map(chores.map((c) => [c.id, c.name]));
+  const chore = new Map(chores.map((c) => [c.id, c]));
+  const exempt = new Set([
+    ...draft.exemptOfficers,
+    ...draft.exemptAbsent,
+    ...draft.creditsToConsume,
+  ]);
 
   return {
     preview: {
       targetMonth,
       proposals: draft.proposals.map((p) => ({
         choreId: p.chore_id,
-        choreName: choreName.get(p.chore_id) ?? "Unknown job",
+        choreName: chore.get(p.chore_id)?.name ?? "Unknown job",
+        slots: chore.get(p.chore_id)?.slots ?? 0,
         members: p.member_ids.map((id) => ({
           id,
           name: nameOf.get(id) ?? "Unknown member",
@@ -339,12 +390,11 @@ export async function previewReshuffle(
         name: nameOf.get(id) ?? "Unknown member",
       })),
       absentNames: draft.exemptAbsent.map((id) => nameOf.get(id) ?? "Unknown"),
+      officerNames: draft.exemptOfficers.map(
+        (id) => nameOf.get(id) ?? "Unknown",
+      ),
       eligibleMembers: members
-        .filter(
-          (m) =>
-            !draft.exemptAbsent.includes(m.id) &&
-            !draft.creditsToConsume.includes(m.id),
-        )
+        .filter((m) => !exempt.has(m.id))
         .map((m) => ({ id: m.id, name: m.full_name })),
       warnings: draft.warnings,
       existingCount: existingRes.count ?? 0,

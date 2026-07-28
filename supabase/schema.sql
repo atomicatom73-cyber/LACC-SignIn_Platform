@@ -42,6 +42,13 @@ alter table public.members
 alter table public.members
   add column if not exists permissions jsonb;
 
+-- Officer status on a *member* account: board members keep their normal member
+-- login but sit out the monthly job draft (no credit spent — untick it and
+-- they're back in the rotation next draft). Manual assignment still works.
+-- President-managed, server-side only (see protect_role_change below).
+alter table public.members
+  add column if not exists officer_status boolean not null default false;
+
 -- Officer recovery link: an officer (shared login) may point their account at
 -- their own personal member account, so a forgotten officer password can be
 -- reset by proving that member account's password or PIN. Set on the officer's
@@ -200,6 +207,12 @@ alter table public.chores drop constraint if exists chores_interval_check;
 alter table public.chores add constraint chores_interval_check
   check ("interval" in ('month', 'first_half', 'second_half'));
 
+-- Opt-in per job: invites whoever holds it to say WHEN they'll do it, which
+-- shows on the jobs board and the printable sheet. Most jobs are "whenever
+-- this month", so it defaults off.
+alter table public.chores
+  add column if not exists scheduling_enabled boolean not null default false;
+
 -- A chore given to a member for a calendar month (`month` = first of month).
 -- Completed chores fall off the member's profile once the month ends;
 -- incomplete ones keep showing until they're done.
@@ -214,6 +227,12 @@ create table if not exists public.chore_assignments (
   created_at   timestamptz not null default now(),
   unique (chore_id, member_id, month)
 );
+
+-- When the member plans to do this job (only meaningful for chores with
+-- scheduling_enabled). Stored UTC, entered and shown on the studio wall clock
+-- (America/Denver — see src/lib/studio.ts). Null = nothing picked yet.
+alter table public.chore_assignments
+  add column if not exists scheduled_at timestamptz;
 
 create index if not exists chore_assignments_member_idx
   on public.chore_assignments (member_id, month);
@@ -454,11 +473,11 @@ create trigger on_auth_user_created
 -- Guard triggers
 -- ---------------------------------------------------------------------------
 
--- Roles, officer titles, and permission sets change only through the
--- server-side service role (auth.uid() is null) — the president's officer
--- management actions and the one-time bootstrap script. Without this, any
--- session allowed to update a member row (see "members update own") could
--- grant itself permissions.
+-- Roles, officer titles, officer status, and permission sets change only
+-- through the server-side service role (auth.uid() is null) — the president's
+-- officer management actions and the one-time bootstrap script. Without this,
+-- any session allowed to update a member row (see "members update own") could
+-- grant itself permissions or a job exemption.
 create or replace function public.protect_role_change()
 returns trigger
 language plpgsql security definer
@@ -467,6 +486,7 @@ as $$
 begin
   if new.role is distinct from old.role
   or new.officer_title is distinct from old.officer_title
+  or new.officer_status is distinct from old.officer_status
   or new.permissions is distinct from old.permissions then
     if auth.uid() is not null then
       raise exception 'Roles and permissions are managed by the president.';
@@ -481,8 +501,8 @@ create trigger members_protect_role
   before update on public.members
   for each row execute function public.protect_role_change();
 
--- Members may only tick their own chore off (status / completed_at); every
--- other column is officer-only.
+-- Members may only tick their own chore off (status / completed_at) and say
+-- when they'll do it (scheduled_at); every other column is officer-only.
 create or replace function public.protect_assignment_update()
 returns trigger
 language plpgsql security definer

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireOfficer } from "@/lib/auth";
 import { dueLabel } from "@/lib/chores";
-import { monthKey, monthLabel } from "@/lib/studio";
+import { formatStudioDateTime, monthKey, monthLabel } from "@/lib/studio";
 import type { ChoreInterval } from "@/lib/types";
 import { PrintButton } from "./PrintButton";
 
@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 type AssignmentRow = {
   status: "pending" | "completed";
+  scheduled_at: string | null;
   chores: {
     id: string;
     name: string;
@@ -39,7 +40,7 @@ export default async function PrintAssignmentsPage({
     // members!…: member_id and assigned_by both reference members; the embed
     // must name its FK or PostgREST rejects it as ambiguous.
     .select(
-      "status, chores(id, name, description, interval), members!chore_assignments_member_id_fkey(full_name)",
+      "status, scheduled_at, chores(id, name, description, interval), members!chore_assignments_member_id_fkey(full_name)",
     )
     .eq("month", month);
 
@@ -62,7 +63,14 @@ export default async function PrintAssignmentsPage({
       interval: row.chores.interval,
       members: [],
     };
-    entry.members.push(row.members?.full_name ?? "Unknown member");
+    // Scheduled jobs print the appointment next to the name, so the sheet on
+    // the wall says who's coming when.
+    const name = row.members?.full_name ?? "Unknown member";
+    entry.members.push(
+      row.scheduled_at
+        ? `${name} (${formatStudioDateTime(row.scheduled_at)})`
+        : name,
+    );
     byJob.set(row.chores.id, entry);
   }
   const jobs = [...byJob.values()]

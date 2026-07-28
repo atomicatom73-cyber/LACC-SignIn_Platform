@@ -113,6 +113,43 @@ export async function removeAbsence(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Officer status — president only. A member with officer status keeps their
+// normal account but sits out the monthly job draft (see chore-algorithm).
+// Written through the admin client because protect_role_change locks the
+// column to server-side writes, exactly like roles and permission sets.
+// ---------------------------------------------------------------------------
+
+/** Set officer status on one or more members. Returns how many rows changed. */
+export async function setOfficerStatus(
+  memberIds: string[],
+  officer: boolean,
+): Promise<{ error: string } | { updated: number }> {
+  const { member: viewer } = await requireOfficer();
+  if (viewer.role !== "president") {
+    return { error: "Only the president can grant officer status." };
+  }
+
+  const ids = [...new Set(memberIds.filter(Boolean))];
+  if (ids.length === 0) return { updated: 0 };
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("members")
+    .update({ officer_status: officer })
+    // Officer *accounts* are shared logins, not people in the job rotation —
+    // the exemption only means anything on a real member row.
+    .eq("role", "member")
+    .in("id", ids)
+    .select("id");
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  revalidatePath("/officer/account");
+  revalidatePath("/officer/chores");
+  return { updated: data?.length ?? 0 };
+}
+
 /** Activate/deactivate a member (president + VP). History is kept. */
 export async function setActive(
   memberId: string,

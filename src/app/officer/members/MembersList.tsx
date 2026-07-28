@@ -19,12 +19,14 @@ export function MembersList({
   groups,
   viewerCanManage,
   viewerCanJobs,
+  viewerIsPresident,
   month,
   jobCatalog,
 }: {
   groups: MemberGroup[];
   viewerCanManage: boolean;
   viewerCanJobs: boolean;
+  viewerIsPresident: boolean;
   month: string;
   jobCatalog: { id: string; name: string }[];
 }) {
@@ -82,6 +84,11 @@ export function MembersList({
                           {member.officerTitle ?? ROLE_LABELS[member.role]}
                         </span>
                       )}
+                      {member.role === "member" && member.officerStatus && (
+                        <span className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                          Officer
+                        </span>
+                      )}
                       {member.role === "member" && !member.hasAccount && (
                         <span className="shrink-0 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
                           No account
@@ -110,6 +117,7 @@ export function MembersList({
                       member={member}
                       viewerCanManage={viewerCanManage}
                       viewerCanJobs={viewerCanJobs}
+                      viewerIsPresident={viewerIsPresident}
                       month={month}
                       jobCatalog={jobCatalog}
                     />

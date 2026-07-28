@@ -17,8 +17,11 @@ export type OpenStudioSession = {
  */
 export function StudentForm({
   openSessions,
+  doneHref,
 }: {
   openSessions: OpenStudioSession[];
+  /** Where "Done" goes — the kiosk, or /me for a member who came from there. */
+  doneHref: string;
 }) {
   const [state, formAction, pending] = useActionState(studentSignIn, null);
   const [openStudio, setOpenStudio] = useState(false);
@@ -38,7 +41,7 @@ export function StudentForm({
             : "Have a great class. 🏺"}
         </p>
         <Link
-          href="/kiosk"
+          href={doneHref}
           className="mt-4 inline-block rounded-2xl border border-border bg-surface px-5 py-3 text-sm font-semibold transition active:scale-[0.98]"
         >
           Done

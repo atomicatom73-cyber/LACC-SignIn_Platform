@@ -14,6 +14,8 @@ export type Member = {
   officer_title: string | null;
   /** Officer permission set; null = the role's built-in defaults. */
   permissions: Partial<Record<Permission, boolean>> | null;
+  /** Board officer: keeps a member account but sits out the auto-job draft. */
+  officer_status: boolean;
   /** Real contact/login-alias email; null for members who haven't added one. */
   email: string | null;
   /** True when the last roster sync matched this member to a sheet row. */
@@ -38,6 +40,8 @@ export type Chore = {
   /** Paused jobs sit out assignment (auto and manual) until unpaused. */
   paused: boolean;
   interval: ChoreInterval;
+  /** Invites whoever holds this job to say when they'll do it. */
+  scheduling_enabled: boolean;
   created_at: string;
 };
 
@@ -50,6 +54,8 @@ export type ChoreAssignment = {
   month: string; // "YYYY-MM-01"
   status: AssignmentStatus;
   completed_at: string | null;
+  /** When the member plans to do it; null until someone picks a time. */
+  scheduled_at: string | null;
   assigned_by: string | null;
   created_at: string;
 };

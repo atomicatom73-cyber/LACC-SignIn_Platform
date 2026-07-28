@@ -14,6 +14,7 @@ import {
   resetMemberPin,
   revokeCredit,
   setActive,
+  setOfficerStatus,
 } from "./actions";
 import { assignChore, removeAssignment } from "../chores/actions";
 
@@ -44,6 +45,8 @@ export type MemberSummary = {
   /** Custom officer accounts carry their display title; null otherwise. */
   officerTitle: string | null;
   active: boolean;
+  /** Board officer — exempt from the monthly job draft. President-managed. */
+  officerStatus: boolean;
   created_at: string;
   hasAccount: boolean;
   email: string | null;
@@ -68,6 +71,7 @@ export function MemberDetail({
   member,
   viewerCanManage,
   viewerCanJobs,
+  viewerIsPresident,
   month,
   jobCatalog,
 }: {
@@ -75,6 +79,8 @@ export function MemberDetail({
   viewerCanManage: boolean;
   /** Jobs permission: assign jobs, grant credits, mark absences. */
   viewerCanJobs: boolean;
+  /** Officer status is the president's call alone (see setOfficerStatus). */
+  viewerIsPresident: boolean;
   month: string;
   jobCatalog: { id: string; name: string }[];
 }) {
@@ -238,6 +244,47 @@ export function MemberDetail({
           )}
         </section>
       )}
+
+      {viewerIsPresident && member.role === "member" && (
+        <section className="sm:col-span-2">
+          <h3 className="text-xs uppercase tracking-wide text-muted">
+            Officer status
+          </h3>
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">
+                {member.officerStatus
+                  ? "On the board — exempt from jobs"
+                  : "Not on the board"}
+              </div>
+              <p className="mt-0.5 text-xs text-muted">
+                Officers sit out the monthly draft without spending a credit.
+                You can still assign them a job by hand above.
+              </p>
+            </div>
+            <button
+              onClick={() =>
+                run(async () => {
+                  const res = await setOfficerStatus(
+                    [member.id],
+                    !member.officerStatus,
+                  );
+                  return "error" in res ? res : null;
+                })
+              }
+              disabled={pending}
+              className={`shrink-0 rounded-xl px-3 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
+                member.officerStatus
+                  ? "border border-border text-muted"
+                  : "border border-accent/40 bg-accent/10 text-accent"
+              }`}
+            >
+              {member.officerStatus ? "Remove" : "Grant"}
+            </button>
+          </div>
+        </section>
+      )}
+
       <section>
         <h3 className="text-xs uppercase tracking-wide text-muted">
           Job credits
