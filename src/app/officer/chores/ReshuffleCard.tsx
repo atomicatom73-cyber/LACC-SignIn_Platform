@@ -488,35 +488,57 @@ function CoverageChart({
         />
       </div>
 
-      <p className="mt-2 text-xs">
-        {none.length === 0 ? (
-          <span className="text-success">
-            Everyone in the rotation has a job. 🎉
-          </span>
-        ) : (
-          <>
-            <span className="font-medium">No job:</span>{" "}
-            <span className="text-muted">
-              {none
-                .map((r) => r.name)
-                .sort((a, b) => a.localeCompare(b))
-                .join(", ")}
-            </span>
-          </>
-        )}
-      </p>
-      {many.length > 0 && (
-        <p className="mt-1 text-xs">
-          <span className="font-medium">Two or more:</span>{" "}
-          <span className="text-muted">
-            {many
-              .map((r) => `${r.name} (${r.jobs})`)
-              .sort((a, b) => a.localeCompare(b))
-              .join(", ")}
-          </span>
+      {none.length === 0 ? (
+        <p className="mt-2 text-xs text-success">
+          Everyone in the rotation has a job. 🎉
         </p>
+      ) : (
+        <NameList
+          label="No job"
+          names={none.map((r) => r.name)}
+        />
+      )}
+      {many.length > 0 && (
+        <NameList
+          label="Two or more"
+          names={many.map((r) => `${r.name} (${r.jobs})`)}
+        />
       )}
     </div>
+  );
+}
+
+/** How many names show before the list folds behind a "show all". */
+const NAME_PREVIEW = 8;
+
+/**
+ * "No job: Amy, Bo, Cal + 54 more". A 60-person studio at the start of the
+ * month has almost everyone uncovered, and the raw list buried the rest of
+ * the card — so long lists fold until they're asked for.
+ */
+function NameList({ label, names }: { label: string; names: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const sorted = [...names].sort((a, b) => a.localeCompare(b));
+  const hidden = sorted.length - NAME_PREVIEW;
+  const shown = expanded ? sorted : sorted.slice(0, NAME_PREVIEW);
+
+  return (
+    <p className="mt-2 text-xs">
+      <span className="font-medium">{label}:</span>{" "}
+      <span className="text-muted">{shown.join(", ")}</span>
+      {hidden > 0 && (
+        <>
+          {!expanded && <span className="text-muted">…</span>}{" "}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="font-medium text-accent underline underline-offset-2"
+          >
+            {expanded ? "show fewer" : `+${hidden} more`}
+          </button>
+        </>
+      )}
+    </p>
   );
 }
 
