@@ -1,15 +1,24 @@
 import { NextResponse } from "next/server";
+import { sendDueJobReminders } from "@/lib/job-reminders";
 import { syncMembersSheet } from "@/lib/members-sheet";
+import {
+  exportSigninLogs,
+  signinLogSheetConfigured,
+} from "@/lib/signin-log-sheet";
 
 // Writes to the DB on every hit, so it must never be cached or prerendered.
 export const dynamic = "force-dynamic";
 
 /**
- * Pulls the studio's member roster sheet into Supabase. This is the daily
- * backstop (see vercel.json) — the primary sync is on-demand when the officer
- * members page loads. Vercel signs cron requests with `Authorization: Bearer
- * $CRON_SECRET`; when that env var is set we require it, so the endpoint can't
- * be run by anyone who finds the URL.
+ * Daily Google-sheet reconciliation (see vercel.json): pulls the member
+ * roster sheet into Supabase, pushes the sign-in logs out to the log sheet,
+ * and fires any due job reminders. All three live on this one route because
+ * Vercel Hobby allows only two cron jobs and the calendar sync holds the
+ * other slot. The sheet syncs are also on-demand (page loads for the roster,
+ * sign-in/out actions for the logs) with this as the backstop; the job
+ * reminders run only from here. Vercel signs cron requests with
+ * `Authorization: Bearer $CRON_SECRET`; when that env var is set we require
+ * it, so the endpoint can't be run by anyone who finds the URL.
  */
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -20,17 +29,28 @@ export async function GET(request: Request) {
     }
   }
 
-  try {
-    const result = await syncMembersSheet();
-    return NextResponse.json({ ok: true, ...result });
-  } catch (error) {
-    console.error("[members-sync]", error);
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 },
-    );
-  }
+  // Each sync runs regardless of the other's outcome.
+  const run = async (job: () => Promise<unknown>) => {
+    try {
+      return await job();
+    } catch (error) {
+      console.error("[members-sync]", error);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+
+  const members = await run(syncMembersSheet);
+  const signinLogs = signinLogSheetConfigured()
+    ? await run(exportSigninLogs)
+    : { skipped: "GOOGLE_SIGNIN_LOG_SHEET_ID not set" };
+  const jobReminders = await run(() => sendDueJobReminders());
+
+  const failed =
+    (members as { error?: string }).error ||
+    (signinLogs as { error?: string }).error ||
+    (jobReminders as { error?: string }).error;
+  return NextResponse.json(
+    { ok: !failed, members, signinLogs, jobReminders },
+    { status: failed ? 500 : 200 },
+  );
 }

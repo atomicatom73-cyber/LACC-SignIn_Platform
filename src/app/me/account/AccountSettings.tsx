@@ -77,7 +77,7 @@ function NameSection({ initialName }: { initialName: string }) {
   };
 
   return (
-    <Card title="Name" hint="This is also how you sign in and appear at the kiosk.">
+    <Card title="Name" hint="This is also how you sign in and appear on the quick sign-in screen.">
       <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
         <input
           type="text"

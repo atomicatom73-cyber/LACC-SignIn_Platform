@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requestSigninLogExport } from "@/lib/signin-log-sheet";
 
 /**
  * Toggle a member's shift from the shared kiosk. Members who set a 4-digit
@@ -16,10 +18,16 @@ export async function toggleKioskShift(
 
   const { data: member, error: memberErr } = await supabase
     .from("members")
-    .select("id, full_name, pin")
+    .select("id, full_name, pin, user_id")
     .eq("id", memberId)
     .single();
   if (memberErr || !member) return { error: "Member not found." };
+
+  // Quick sign-in is for members with an app account — the roster UI walks
+  // account-less members to signup, and this backstops stale clients.
+  if (!member.user_id) {
+    return { error: "Create an account first — then you can sign in here." };
+  }
 
   if (member.pin && member.pin !== pin.trim()) {
     return { error: "Wrong PIN. Try again." };
@@ -47,6 +55,7 @@ export async function toggleKioskShift(
       .is("signed_out_at", null)
       .gte("signed_in_at", openShift.signed_in_at);
     revalidatePath("/kiosk");
+    after(requestSigninLogExport);
     return { nowIn: false, name: member.full_name };
   }
 
@@ -54,6 +63,7 @@ export async function toggleKioskShift(
     .from("shifts")
     .insert({ member_id: memberId, source: "kiosk" });
   revalidatePath("/kiosk");
+  after(requestSigninLogExport);
   return { nowIn: true, name: member.full_name };
 }
 
@@ -93,6 +103,7 @@ export async function kioskGuestSignIn(
     .insert({ host_member_id: hostMemberId, guest_name: guestName });
   if (error) return { error: error.message };
 
+  after(requestSigninLogExport);
   return { success: true, name: guestName };
 }
 
@@ -102,8 +113,9 @@ export type StudentFormState =
   | null;
 
 /**
- * Sign a student in — either for a class (name + class label, presence-only)
- * or for open studio time (name only; they sign out from the kiosk later).
+ * Sign a student in — for a class (presence-only) or for open studio time
+ * (they sign out from the kiosk later). Both say which class: the one
+ * they're here for, or the one their open-studio time comes with.
  */
 export async function studentSignIn(
   _prev: StudentFormState,
@@ -111,11 +123,15 @@ export async function studentSignIn(
 ): Promise<StudentFormState> {
   const openStudio = formData.get("session_type") === "open_studio";
   const studentName = String(formData.get("student_name") ?? "").trim();
-  const classLabel = openStudio
-    ? "Open studio"
-    : String(formData.get("class_label") ?? "").trim();
+  const classLabel = String(formData.get("class_label") ?? "").trim();
   if (!studentName) return { error: "Enter your name." };
-  if (!classLabel) return { error: "Enter which class you're here for." };
+  if (!classLabel) {
+    return {
+      error: openStudio
+        ? "Enter which class you did."
+        : "Enter which class you're here for.",
+    };
+  }
   if (studentName.length > 80 || classLabel.length > 80) {
     return { error: "Keep the name and class under 80 characters." };
   }
@@ -129,6 +145,7 @@ export async function studentSignIn(
   if (error) return { error: error.message };
 
   revalidatePath("/kiosk/student");
+  after(requestSigninLogExport);
   return { success: true, name: studentName, openStudio };
 }
 
@@ -151,5 +168,6 @@ export async function studentSignOut(
   if (!data) return { error: "Already signed out — you're all set." };
 
   revalidatePath("/kiosk/student");
+  after(requestSigninLogExport);
   return { name: data.student_name };
 }

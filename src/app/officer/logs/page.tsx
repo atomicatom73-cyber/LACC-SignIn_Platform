@@ -1,9 +1,17 @@
+import { after } from "next/server";
 import { requireOfficer } from "@/lib/auth";
 import { MonthGrid, type DayMarker } from "@/components/MonthGrid";
+import {
+  exportSigninLogsThrottled,
+  signinLogSheetConfigured,
+  signinLogSheetStatus,
+  signinLogSheetUrl,
+} from "@/lib/signin-log-sheet";
 import {
   addMonths,
   dayLabel,
   formatStudioClock,
+  formatStudioDateTime,
   monthKey,
   studioDayKey,
   studioToUtcIso,
@@ -41,13 +49,18 @@ type StudentRow = {
   signed_out_at: string | null;
 };
 
-/** Who was in the studio, day by day. President + vice president only. */
+/** Who was in the studio, day by day. Needs the sign-in-logs permission. */
 export default async function SignInLogsPage({
   searchParams,
 }: {
   searchParams: Promise<{ month?: string; day?: string }>;
 }) {
-  const { supabase } = await requireOfficer(["president", "vice_president"]);
+  const { supabase } = await requireOfficer("logs");
+
+  // Keep the log sheet fresh without making the page wait on Google.
+  const sheetConfigured = signinLogSheetConfigured();
+  const sheetStatus = sheetConfigured ? await signinLogSheetStatus() : null;
+  if (sheetConfigured) after(exportSigninLogsThrottled);
 
   const { month: rawMonth, day: rawDay } = await searchParams;
   const currentMonth = monthKey();
@@ -122,10 +135,18 @@ export default async function SignInLogsPage({
     });
   }
   for (const s of students) {
+    // Open-studio rows carry the class the visit comes with; legacy rows
+    // stored the literal "Open studio" and shouldn't double up.
+    const label =
+      s.session_type === "open_studio"
+        ? s.class_label && s.class_label !== "Open studio"
+          ? `Open studio · ${s.class_label}`
+          : "Open studio"
+        : s.class_label;
     push({
       at: s.signed_in_at,
       kind: "student",
-      title: `${s.student_name} — ${s.class_label}`,
+      title: `${s.student_name} — ${label}`,
       // Class students are presence-only; open-studio visits get an out time.
       detail:
         s.session_type === "open_studio"
@@ -208,6 +229,24 @@ export default async function SignInLogsPage({
           </ul>
         )}
       </section>
+
+      {sheetConfigured && (
+        <p className="mt-8 text-xs text-muted">
+          These logs mirror to a{" "}
+          <a
+            href={signinLogSheetUrl()!}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            Google sheet
+          </a>{" "}
+          after every sign-in.
+          {sheetStatus
+            ? ` Last export ${formatStudioDateTime(sheetStatus.syncedAt)} — ${sheetStatus.rows} rows across ${sheetStatus.months} month${sheetStatus.months === 1 ? "" : "s"}.`
+            : " First export pending."}
+        </p>
+      )}
     </main>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import { sendMessage } from "./actions";
 
 export type PickerMember = { id: string; full_name: string; active: boolean };
@@ -15,15 +15,17 @@ export function ComposeForm({ members }: { members: PickerMember[] }) {
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Clear the form after a successful send.
-  useEffect(() => {
-    if (state?.success) {
-      setSubject("");
-      setBody("");
-      setFilter("");
-      setSelected(new Set());
-    }
-  }, [state]);
+  // Clear the form after a successful send. State is adjusted during render
+  // (not in an effect): each send returns a fresh `state` object, so this
+  // runs exactly once per success and React re-renders before painting.
+  const [clearedFor, setClearedFor] = useState<typeof state>(null);
+  if (state?.success && state !== clearedFor) {
+    setClearedFor(state);
+    setSubject("");
+    setBody("");
+    setFilter("");
+    setSelected(new Set());
+  }
 
   const query = filter.trim().toLowerCase();
   const visibleIds = useMemo(() => {

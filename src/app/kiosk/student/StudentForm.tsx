@@ -17,8 +17,11 @@ export type OpenStudioSession = {
  */
 export function StudentForm({
   openSessions,
+  doneHref,
 }: {
   openSessions: OpenStudioSession[];
+  /** Where "Done" goes — the kiosk, or /me for a member who came from there. */
+  doneHref: string;
 }) {
   const [state, formAction, pending] = useActionState(studentSignIn, null);
   const [openStudio, setOpenStudio] = useState(false);
@@ -38,7 +41,7 @@ export function StudentForm({
             : "Have a great class. 🏺"}
         </p>
         <Link
-          href="/kiosk"
+          href={doneHref}
           className="mt-4 inline-block rounded-2xl border border-border bg-surface px-5 py-3 text-sm font-semibold transition active:scale-[0.98]"
         >
           Done
@@ -86,21 +89,19 @@ export function StudentForm({
           />
         </label>
 
-        {!openStudio && (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs uppercase tracking-wide text-muted">
-              Which class?
-            </span>
-            <input
-              type="text"
-              name="class_label"
-              required
-              autoComplete="off"
-              placeholder="“wednesday night class”"
-              className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
-            />
-          </label>
-        )}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs uppercase tracking-wide text-muted">
+            {openStudio ? "Which class did you do?" : "Which class?"}
+          </span>
+          <input
+            type="text"
+            name="class_label"
+            required
+            autoComplete="off"
+            placeholder="“wednesday night class”"
+            className="rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent"
+          />
+        </label>
 
         {openStudio && (
           <p className="text-sm text-muted">

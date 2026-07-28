@@ -1,13 +1,21 @@
 import Link from "next/link";
 import { requireOfficer } from "@/lib/auth";
-import { monthKey, monthLabel } from "@/lib/studio";
+import { dueLabel } from "@/lib/chores";
+import { formatStudioDateTime, monthKey, monthLabel } from "@/lib/studio";
+import type { ChoreInterval } from "@/lib/types";
 import { PrintButton } from "./PrintButton";
 
 export const dynamic = "force-dynamic";
 
 type AssignmentRow = {
   status: "pending" | "completed";
-  chores: { id: string; name: string; description: string | null } | null;
+  scheduled_at: string | null;
+  chores: {
+    id: string;
+    name: string;
+    description: string | null;
+    interval: ChoreInterval;
+  } | null;
   members: { full_name: string } | null;
 };
 
@@ -20,7 +28,7 @@ export default async function PrintAssignmentsPage({
 }: {
   searchParams: Promise<{ month?: string }>;
 }) {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   const { month: rawMonth } = await searchParams;
   const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawMonth ?? "")
@@ -32,7 +40,7 @@ export default async function PrintAssignmentsPage({
     // members!…: member_id and assigned_by both reference members; the embed
     // must name its FK or PostgREST rejects it as ambiguous.
     .select(
-      "status, chores(id, name, description), members!chore_assignments_member_id_fkey(full_name)",
+      "status, scheduled_at, chores(id, name, description, interval), members!chore_assignments_member_id_fkey(full_name)",
     )
     .eq("month", month);
 
@@ -40,16 +48,29 @@ export default async function PrintAssignmentsPage({
 
   const byJob = new Map<
     string,
-    { name: string; description: string | null; members: string[] }
+    {
+      name: string;
+      description: string | null;
+      interval: ChoreInterval;
+      members: string[];
+    }
   >();
   for (const row of rows) {
     if (!row.chores) continue;
     const entry = byJob.get(row.chores.id) ?? {
       name: row.chores.name,
       description: row.chores.description,
+      interval: row.chores.interval,
       members: [],
     };
-    entry.members.push(row.members?.full_name ?? "Unknown member");
+    // Scheduled jobs print the appointment next to the name, so the sheet on
+    // the wall says who's coming when.
+    const name = row.members?.full_name ?? "Unknown member";
+    entry.members.push(
+      row.scheduled_at
+        ? `${name} (${formatStudioDateTime(row.scheduled_at)})`
+        : name,
+    );
     byJob.set(row.chores.id, entry);
   }
   const jobs = [...byJob.values()]
@@ -88,7 +109,12 @@ export default async function PrintAssignmentsPage({
             {jobs.map((job) => (
               <tr key={job.name} className="border-b border-neutral-300 align-top">
                 <td className="py-2.5 pr-4">
-                  <div className="font-semibold">{job.name}</div>
+                  <div className="font-semibold">
+                    {job.name}
+                    <span className="ml-2 text-xs font-normal text-neutral-500">
+                      {dueLabel(job.interval)}
+                    </span>
+                  </div>
                   {job.description && (
                     <div className="mt-0.5 text-xs text-neutral-600">
                       {job.description}

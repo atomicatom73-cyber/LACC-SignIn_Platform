@@ -19,16 +19,35 @@ create table if not exists public.members (
   created_at  timestamptz not null default now()
 );
 
--- Roles: 'member' plus the three shared officer accounts. Officer accounts are
--- handed to whoever currently holds the role; officers also keep a personal
--- member account under their own email.
+-- Roles: 'member', the three classic shared officer accounts, and 'officer'
+-- for president-created custom officer logins (e.g. "Treasurer"). Officer
+-- accounts are handed to whoever currently holds the role; officers also keep
+-- a personal member account under their own name.
 update public.members
    set role = 'member'
- where role not in ('member', 'president', 'vice_president', 'volunteer_coordinator');
+ where role not in ('member', 'president', 'vice_president', 'volunteer_coordinator', 'officer');
 
 alter table public.members drop constraint if exists members_role_check;
 alter table public.members add constraint members_role_check
-  check (role in ('member', 'president', 'vice_president', 'volunteer_coordinator'));
+  check (role in ('member', 'president', 'vice_president', 'volunteer_coordinator', 'officer'));
+
+-- Custom officer accounts: display title ("Treasurer") and a per-account
+-- permission set (jsonb of {members, logs, jobs, messages, door_codes} →
+-- boolean). Null permissions = the role's built-in defaults (president/VP:
+-- everything; volunteer coordinator: jobs + messages). Null officer_title =
+-- the classic role label. Both are president-managed, server-side only (see
+-- protect_role_change below).
+alter table public.members
+  add column if not exists officer_title text;
+alter table public.members
+  add column if not exists permissions jsonb;
+
+-- Officer status on a *member* account: board members keep their normal member
+-- login but sit out the monthly job draft (no credit spent — untick it and
+-- they're back in the rotation next draft). Manual assignment still works.
+-- President-managed, server-side only (see protect_role_change below).
+alter table public.members
+  add column if not exists officer_status boolean not null default false;
 
 -- Officer recovery link: an officer (shared login) may point their account at
 -- their own personal member account, so a forgotten officer password can be
@@ -75,6 +94,13 @@ alter table public.members
 alter table public.members
   add column if not exists sheet_comments text;
 
+-- Write-back bookkeeping: the name on the sheet row this member is bound to,
+-- as of the last sync. Null = the sheet has never listed them (so the sync
+-- appends them as a new row). It doubles as a tombstone — a member whose row
+-- the board deleted keeps their sheet_name, so they are never re-added.
+alter table public.members
+  add column if not exists sheet_name text;
+
 -- ---------------------------------------------------------------------------
 -- Shifts (studio sign-in / sign-out)
 -- ---------------------------------------------------------------------------
@@ -95,6 +121,12 @@ create unique index if not exists shifts_one_open_per_member
 create index if not exists shifts_member_idx on public.shifts (member_id);
 create index if not exists shifts_signed_in_idx on public.shifts (signed_in_at);
 
+-- Set true by close_stale_shifts() when it force-closes a forgotten shift at
+-- end of day, so the sign-in log sheet can mark it "Forgot to sign out" rather
+-- than showing the synthetic 23:59:59 out-time as if it were a real sign-out.
+alter table public.shifts
+  add column if not exists auto_closed boolean not null default false;
+
 -- Guests: a signed-in member brings a visitor, reminded to pay at sign-in.
 -- Shows in the officer sign-in logs. Guests are signed out automatically when
 -- their host signs out (or by close_stale_shifts at end of day).
@@ -107,6 +139,11 @@ create table if not exists public.guest_signins (
 
 alter table public.guest_signins
   add column if not exists signed_out_at timestamptz;
+
+-- See shifts.auto_closed: true only when close_stale_shifts() swept a guest who
+-- was never signed out (not when their host signs out — that's a real out-time).
+alter table public.guest_signins
+  add column if not exists auto_closed boolean not null default false;
 
 create index if not exists guest_signins_time_idx
   on public.guest_signins (signed_in_at);
@@ -125,6 +162,10 @@ alter table public.student_signins
   add column if not exists session_type text not null default 'class';
 alter table public.student_signins
   add column if not exists signed_out_at timestamptz;
+-- See shifts.auto_closed: true only for open-studio visitors close_stale_shifts()
+-- swept because they forgot to sign out (class rows are presence-only).
+alter table public.student_signins
+  add column if not exists auto_closed boolean not null default false;
 
 alter table public.student_signins drop constraint if exists student_signins_session_type_check;
 alter table public.student_signins add constraint student_signins_session_type_check
@@ -150,6 +191,28 @@ create table if not exists public.chores (
   created_at  timestamptz not null default now()
 );
 
+-- Paused jobs keep their history but sit out the auto-assign (and manual
+-- assigning) until an officer unpauses them.
+alter table public.chores
+  add column if not exists paused boolean not null default false;
+
+-- When during the month the job is due: full month (due end of month),
+-- first half (due the 15th), or second half (due end of month). Drives the
+-- reminder schedule. Quoted: unquoted `interval` can parse as an INTERVAL
+-- literal inside expressions.
+alter table public.chores
+  add column if not exists "interval" text not null default 'month';
+
+alter table public.chores drop constraint if exists chores_interval_check;
+alter table public.chores add constraint chores_interval_check
+  check ("interval" in ('month', 'first_half', 'second_half'));
+
+-- Opt-in per job: invites whoever holds it to say WHEN they'll do it, which
+-- shows on the jobs board and the printable sheet. Most jobs are "whenever
+-- this month", so it defaults off.
+alter table public.chores
+  add column if not exists scheduling_enabled boolean not null default false;
+
 -- A chore given to a member for a calendar month (`month` = first of month).
 -- Completed chores fall off the member's profile once the month ends;
 -- incomplete ones keep showing until they're done.
@@ -164,6 +227,12 @@ create table if not exists public.chore_assignments (
   created_at   timestamptz not null default now(),
   unique (chore_id, member_id, month)
 );
+
+-- When the member plans to do this job (only meaningful for chores with
+-- scheduling_enabled). Stored UTC, entered and shown on the studio wall clock
+-- (America/Denver — see src/lib/studio.ts). Null = nothing picked yet.
+alter table public.chore_assignments
+  add column if not exists scheduled_at timestamptz;
 
 create index if not exists chore_assignments_member_idx
   on public.chore_assignments (member_id, month);
@@ -342,7 +411,31 @@ language sql stable security definer
 set search_path = public
 as $$
   select coalesce(
-    public.my_role() in ('president', 'vice_president', 'volunteer_coordinator'),
+    public.my_role() in ('president', 'vice_president', 'volunteer_coordinator', 'officer'),
+    false
+  );
+$$;
+
+-- Does the logged-in user hold a given officer permission? Mirrors
+-- hasPermission in src/lib/roles.ts: the president always does; an explicit
+-- permissions jsonb wins; otherwise the classic roles fall back to their
+-- built-in defaults. Members (and everyone else) get false.
+create or replace function public.has_permission(perm text)
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select coalesce(
+    (select case
+       when m.role = 'president' then true
+       when m.role not in ('vice_president', 'volunteer_coordinator', 'officer') then false
+       when m.permissions is not null then coalesce((m.permissions ->> perm)::boolean, false)
+       when m.role = 'vice_president' then true
+       when m.role = 'volunteer_coordinator' then perm in ('jobs', 'messages')
+       else false
+     end
+     from public.members m
+     where m.user_id = auth.uid()),
     false
   );
 $$;
@@ -380,19 +473,23 @@ create trigger on_auth_user_created
 -- Guard triggers
 -- ---------------------------------------------------------------------------
 
--- Roles are permanently fixed: the three officer roles belong to the shared
--- officer accounts and everyone else is a member. No client session may
--- change any role — only the server-side service role (auth.uid() is null),
--- which the one-time bootstrap script uses.
+-- Roles, officer titles, officer status, and permission sets change only
+-- through the server-side service role (auth.uid() is null) — the president's
+-- officer management actions and the one-time bootstrap script. Without this,
+-- any session allowed to update a member row (see "members update own") could
+-- grant itself permissions or a job exemption.
 create or replace function public.protect_role_change()
 returns trigger
 language plpgsql security definer
 set search_path = public
 as $$
 begin
-  if new.role is distinct from old.role then
+  if new.role is distinct from old.role
+  or new.officer_title is distinct from old.officer_title
+  or new.officer_status is distinct from old.officer_status
+  or new.permissions is distinct from old.permissions then
     if auth.uid() is not null then
-      raise exception 'Roles are fixed and cannot be changed.';
+      raise exception 'Roles and permissions are managed by the president.';
     end if;
   end if;
   return new;
@@ -404,8 +501,8 @@ create trigger members_protect_role
   before update on public.members
   for each row execute function public.protect_role_change();
 
--- Members may only tick their own chore off (status / completed_at); every
--- other column is officer-only.
+-- Members may only tick their own chore off (status / completed_at) and say
+-- when they'll do it (scheduled_at); every other column is officer-only.
 create or replace function public.protect_assignment_update()
 returns trigger
 language plpgsql security definer
@@ -432,7 +529,9 @@ create trigger chore_assignments_protect
 -- ---------------------------------------------------------------------------
 -- Forgotten sign-outs: close open member shifts, guest visits, and open-studio
 -- student visits from previous studio days at 23:59:59 local (America/Denver)
--- time of the day they signed in.
+-- time of the day they signed in. Each closed row is also flagged
+-- `auto_closed = true` so the sign-in log sheet shows "Forgot to sign out"
+-- instead of the synthetic 23:59:59 out-time (see src/lib/signin-log-sheet.ts).
 -- Called opportunistically from the app; optionally schedule with pg_cron.
 -- ---------------------------------------------------------------------------
 
@@ -444,7 +543,8 @@ as $$
   update public.shifts
      set signed_out_at =
            (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
-             at time zone 'America/Denver') - interval '1 second'
+             at time zone 'America/Denver') - interval '1 second',
+         auto_closed = true
    where signed_out_at is null
      and (signed_in_at at time zone 'America/Denver')::date
          < (now() at time zone 'America/Denver')::date;
@@ -452,7 +552,8 @@ as $$
   update public.guest_signins
      set signed_out_at =
            (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
-             at time zone 'America/Denver') - interval '1 second'
+             at time zone 'America/Denver') - interval '1 second',
+         auto_closed = true
    where signed_out_at is null
      and (signed_in_at at time zone 'America/Denver')::date
          < (now() at time zone 'America/Denver')::date;
@@ -461,7 +562,8 @@ as $$
   update public.student_signins
      set signed_out_at =
            (((signed_in_at at time zone 'America/Denver')::date + 1)::timestamp
-             at time zone 'America/Denver') - interval '1 second'
+             at time zone 'America/Denver') - interval '1 second',
+         auto_closed = true
    where signed_out_at is null
      and session_type = 'open_studio'
      and (signed_in_at at time zone 'America/Denver')::date
@@ -503,13 +605,13 @@ create policy "members read own"
 drop policy if exists "members update own" on public.members;
 create policy "members update own"
   on public.members for update
-  using (user_id = auth.uid() or public.my_role() in ('president', 'vice_president'))
-  with check (user_id = auth.uid() or public.my_role() in ('president', 'vice_president'));
+  using (user_id = auth.uid() or public.has_permission('members'))
+  with check (user_id = auth.uid() or public.has_permission('members'));
 
 drop policy if exists "members insert by admins" on public.members;
 create policy "members insert by admins"
   on public.members for insert
-  with check (public.my_role() in ('president', 'vice_president'));
+  with check (public.has_permission('members'));
 
 -- shifts ----------------------------------------------------------------
 
@@ -556,8 +658,8 @@ create policy "chores read all"
 drop policy if exists "chores manage officers" on public.chores;
 create policy "chores manage officers"
   on public.chores for all
-  using (public.is_officer())
-  with check (public.is_officer());
+  using (public.has_permission('jobs'))
+  with check (public.has_permission('jobs'));
 
 -- chore_assignments -------------------------------------------------------
 
@@ -569,18 +671,20 @@ create policy "assignments read own or officer"
 drop policy if exists "assignments insert officers" on public.chore_assignments;
 create policy "assignments insert officers"
   on public.chore_assignments for insert
-  with check (public.is_officer());
+  with check (public.has_permission('jobs'));
 
+-- Members may update their own assignment (mark a job done from /me);
+-- managing other people's needs the jobs permission.
 drop policy if exists "assignments update own or officer" on public.chore_assignments;
 create policy "assignments update own or officer"
   on public.chore_assignments for update
-  using (member_id = public.my_member_id() or public.is_officer())
-  with check (member_id = public.my_member_id() or public.is_officer());
+  using (member_id = public.my_member_id() or public.has_permission('jobs'))
+  with check (member_id = public.my_member_id() or public.has_permission('jobs'));
 
 drop policy if exists "assignments delete officers" on public.chore_assignments;
 create policy "assignments delete officers"
   on public.chore_assignments for delete
-  using (public.is_officer());
+  using (public.has_permission('jobs'));
 
 -- chore_credits -----------------------------------------------------------
 
@@ -592,8 +696,8 @@ create policy "credits read own or officer"
 drop policy if exists "credits manage officers" on public.chore_credits;
 create policy "credits manage officers"
   on public.chore_credits for all
-  using (public.is_officer())
-  with check (public.is_officer());
+  using (public.has_permission('jobs'))
+  with check (public.has_permission('jobs'));
 
 -- absences ----------------------------------------------------------------
 
@@ -605,8 +709,8 @@ create policy "absences read own or officer"
 drop policy if exists "absences manage officers" on public.absences;
 create policy "absences manage officers"
   on public.absences for all
-  using (public.is_officer())
-  with check (public.is_officer());
+  using (public.has_permission('jobs'))
+  with check (public.has_permission('jobs'));
 
 -- events ------------------------------------------------------------------
 
@@ -636,12 +740,12 @@ create policy "messages read recipients or officers"
 drop policy if exists "messages send officers" on public.messages;
 create policy "messages send officers"
   on public.messages for insert
-  with check (public.is_officer() and sender_id = public.my_member_id());
+  with check (public.has_permission('messages') and sender_id = public.my_member_id());
 
 drop policy if exists "messages delete admins" on public.messages;
 create policy "messages delete admins"
   on public.messages for delete
-  using (public.my_role() in ('president', 'vice_president'));
+  using (public.has_permission('messages'));
 
 -- message_recipients ---------------------------------------------------------
 
@@ -653,7 +757,7 @@ create policy "recipients read own or officer"
 drop policy if exists "recipients insert officers" on public.message_recipients;
 create policy "recipients insert officers"
   on public.message_recipients for insert
-  with check (public.is_officer());
+  with check (public.has_permission('messages'));
 
 drop policy if exists "recipients mark read own" on public.message_recipients;
 create policy "recipients mark read own"
@@ -664,7 +768,7 @@ create policy "recipients mark read own"
 drop policy if exists "recipients delete officers" on public.message_recipients;
 create policy "recipients delete officers"
   on public.message_recipients for delete
-  using (public.is_officer());
+  using (public.has_permission('messages'));
 
 -- door_codes ----------------------------------------------------------------
 -- Read: any officer, or any *active* member (deactivated members are excluded,
@@ -684,8 +788,8 @@ create policy "door codes read active members"
 drop policy if exists "door codes manage admins" on public.door_codes;
 create policy "door codes manage admins"
   on public.door_codes for all
-  using (public.my_role() in ('president', 'vice_president'))
-  with check (public.my_role() in ('president', 'vice_president'));
+  using (public.has_permission('door_codes'))
+  with check (public.has_permission('door_codes'));
 
 -- ---------------------------------------------------------------------------
 -- Seed: the studio's standing chore catalog (edit freely in the app)

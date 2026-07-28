@@ -4,7 +4,7 @@ import {
   membersSheetSyncStatus,
   syncMembersSheetThrottled,
 } from "@/lib/members-sheet";
-import { canManageMembers } from "@/lib/roles";
+import { hasPermission } from "@/lib/roles";
 import { formatStudioDateTime, monthKey } from "@/lib/studio";
 import type { Absence, ChoreCredit, Member } from "@/lib/types";
 import type { MemberSummary, ThisMonthChip } from "./MemberDetail";
@@ -12,6 +12,22 @@ import { AddMemberForm } from "./AddMemberForm";
 import { MembersList, type MemberGroup } from "./MembersList";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * ", wrote back 2 emails + 1 name + 3 new rows" — or "" when the last sync
+ * pushed nothing (or predates the write-back feature and has no counts).
+ */
+function describeWriteBack(
+  pushed: { emails: number; names: number; added: number } | undefined,
+): string {
+  if (!pushed) return "";
+  const parts = [
+    pushed.emails > 0 && `${pushed.emails} email${pushed.emails === 1 ? "" : "s"}`,
+    pushed.names > 0 && `${pushed.names} name${pushed.names === 1 ? "" : "s"}`,
+    pushed.added > 0 && `${pushed.added} new row${pushed.added === 1 ? "" : "s"}`,
+  ].filter(Boolean);
+  return parts.length > 0 ? `, wrote back ${parts.join(" + ")}` : "";
+}
 
 export default async function OfficerMembersPage() {
   const { supabase, member: viewer } = await requireOfficer();
@@ -32,7 +48,7 @@ export default async function OfficerMembersPage() {
       supabase
         .from("members")
         .select(
-          "id, user_id, full_name, role, pin, active, created_at, email, in_sheet, sheet_paid, sheet_payment_type, sheet_policy, sheet_photos, sheet_comments",
+          "id, user_id, full_name, role, officer_title, officer_status, pin, active, created_at, email, in_sheet, sheet_paid, sheet_payment_type, sheet_policy, sheet_photos, sheet_comments",
         )
         .order("full_name", { ascending: true }),
       supabase
@@ -101,6 +117,8 @@ export default async function OfficerMembersPage() {
     let chip: ThisMonthChip;
     if (m.role !== "member") {
       chip = { label: "Officer account", tone: "info" };
+    } else if (m.officer_status && jobs.length === 0) {
+      chip = { label: "Exempt (officer)", tone: "info" };
     } else if (absentThisMonth) {
       chip = { label: "Absent this month", tone: "info" };
     } else if (jobs.length === 0) {
@@ -115,6 +133,8 @@ export default async function OfficerMembersPage() {
       id: m.id,
       full_name: m.full_name,
       role: m.role,
+      officerTitle: m.officer_title,
+      officerStatus: m.officer_status,
       active: m.active,
       created_at: m.created_at,
       hasAccount: m.user_id !== null,
@@ -167,7 +187,7 @@ export default async function OfficerMembersPage() {
         Roster, job credits, and absences.
       </p>
 
-      {canManageMembers(viewer.role) && (
+      {hasPermission(viewer, "members") && (
         <div className="mt-6">
           <AddMemberForm />
         </div>
@@ -178,14 +198,18 @@ export default async function OfficerMembersPage() {
           <p className="text-muted">
             Roster synced from sheet tab &ldquo;{syncStatus.tab}&rdquo; ·{" "}
             {formatStudioDateTime(syncStatus.syncedAt)} · {syncStatus.totalRows}{" "}
-            rows ({syncStatus.matched} matched, {syncStatus.created} new).
-            Active status and sheet details follow the sheet — edit them there.
+            rows ({syncStatus.matched} matched, {syncStatus.created} new
+            {describeWriteBack(syncStatus.pushed)}). Active status and sheet
+            details follow the sheet — edit them there. Name and email changes
+            made in the app, and members added here, are written back to the
+            sheet.
           </p>
           {syncStatus.flagged.length > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer text-xs font-medium text-muted">
-                {syncStatus.flagged.length} row
-                {syncStatus.flagged.length === 1 ? "" : "s"} need attention
+                {syncStatus.flagged.length === 1
+                  ? "1 row needs attention"
+                  : `${syncStatus.flagged.length} rows need attention`}
               </summary>
               <ul className="mt-2 flex flex-col gap-1 text-xs text-muted">
                 {syncStatus.flagged.map((note) => (
@@ -200,7 +224,9 @@ export default async function OfficerMembersPage() {
       <div className="mt-6">
         <MembersList
           groups={groups}
-          viewerRole={viewer.role}
+          viewerCanManage={hasPermission(viewer, "members")}
+          viewerCanJobs={hasPermission(viewer, "jobs")}
+          viewerIsPresident={viewer.role === "president"}
           month={month}
           jobCatalog={jobCatalog}
         />

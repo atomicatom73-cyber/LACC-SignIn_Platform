@@ -1,6 +1,6 @@
 /** Database row types (mirror supabase/schema.sql). */
 
-import type { Role } from "./roles";
+import type { Permission, Role } from "./roles";
 
 export type Member = {
   id: string;
@@ -10,6 +10,12 @@ export type Member = {
   pin: string | null;
   active: boolean;
   created_at: string;
+  /** Display title for president-created officer accounts ("Treasurer"). */
+  officer_title: string | null;
+  /** Officer permission set; null = the role's built-in defaults. */
+  permissions: Partial<Record<Permission, boolean>> | null;
+  /** Board officer: keeps a member account but sits out the auto-job draft. */
+  officer_status: boolean;
   /** Real contact/login-alias email; null for members who haven't added one. */
   email: string | null;
   /** True when the last roster sync matched this member to a sheet row. */
@@ -22,12 +28,20 @@ export type Member = {
   sheet_comments: string | null;
 };
 
+/** When during the month a job is due (drives its reminder timing). */
+export type ChoreInterval = "month" | "first_half" | "second_half";
+
 export type Chore = {
   id: string;
   name: string;
   description: string | null;
   slots: number;
   active: boolean;
+  /** Paused jobs sit out assignment (auto and manual) until unpaused. */
+  paused: boolean;
+  interval: ChoreInterval;
+  /** Invites whoever holds this job to say when they'll do it. */
+  scheduling_enabled: boolean;
   created_at: string;
 };
 
@@ -40,6 +54,8 @@ export type ChoreAssignment = {
   month: string; // "YYYY-MM-01"
   status: AssignmentStatus;
   completed_at: string | null;
+  /** When the member plans to do it; null until someone picks a time. */
+  scheduled_at: string | null;
   assigned_by: string | null;
   created_at: string;
 };
@@ -112,7 +128,8 @@ export type MessageAudience =
 export type Message = {
   id: string;
   sender_id: string | null;
-  sender_role: Role;
+  /** A Role for classic accounts; the officer's title for custom officers. */
+  sender_role: string;
   subject: string;
   body: string;
   audience: MessageAudience;

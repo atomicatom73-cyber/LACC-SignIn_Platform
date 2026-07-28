@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useOptimistic, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { formatDuration } from "@/lib/time";
 import { PasswordInput } from "@/components/PasswordInput";
 import { toggleKioskShift } from "./actions";
@@ -9,6 +10,7 @@ export type RosterMember = {
   id: string;
   full_name: string;
   hasPin: boolean;
+  hasAccount: boolean;
   openSince: string | null;
 };
 
@@ -17,26 +19,46 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [accountFor, setAccountFor] = useState<RosterMember | null>(null);
   const [pinFor, setPinFor] = useState<RosterMember | null>(null);
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
   const pinInputRef = useRef<HTMLInputElement>(null);
 
-  const visible = members.filter((m) =>
+  // Cards flip the moment they're tapped; the server round-trip (and the
+  // roster refresh it triggers) settles the real state behind the scenes,
+  // and a failed toggle just snaps back.
+  const [optimisticMembers, flipOptimistic] = useOptimistic(
+    members,
+    (current, memberId: string) =>
+      current.map((m) =>
+        m.id === memberId
+          ? { ...m, openSince: m.openSince ? null : new Date().toISOString() }
+          : m,
+      ),
+  );
+
+  const visible = optimisticMembers.filter((m) =>
     m.full_name.toLowerCase().includes(query.trim().toLowerCase()),
   );
 
   function run(member: RosterMember, pinValue: string) {
     setBusyId(member.id);
     startTransition(async () => {
+      flipOptimistic(member.id);
       try {
         // The server action calls revalidatePath("/kiosk"), which refreshes
         // the roster automatically — no router.refresh() needed.
         const res = await toggleKioskShift(member.id, pinValue);
         if ("error" in res) {
-          setPinError(res.error);
-          setPin("");
-          pinInputRef.current?.focus();
+          if (pinFor) {
+            setPinError(res.error);
+            setPin("");
+            pinInputRef.current?.focus();
+          } else {
+            // No dialog open (PIN-less tap) — surface the error as a toast.
+            setToast(res.error);
+          }
           return;
         }
         const first = res.name.split(" ")[0];
@@ -55,7 +77,11 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   }
 
   function handleTap(member: RosterMember) {
-    if (member.hasPin) {
+    if (!member.hasAccount) {
+      // No login account (imported from the sheet or officer-added): quick
+      // sign-in is members-with-accounts only — walk them to signup instead.
+      setAccountFor(member);
+    } else if (member.hasPin) {
       setPinFor(member);
       setPin("");
       setPinError(null);
@@ -95,7 +121,14 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
 
       {visible.length === 0 ? (
         <p className="mt-8 text-center text-muted">
-          No one matches “{query}”. Ask an officer to add you to the roster.
+          No one matches “{query}”.{" "}
+          <Link
+            href="/login?create=1"
+            className="text-accent underline underline-offset-2"
+          >
+            Create an account
+          </Link>{" "}
+          to join the roster.
         </p>
       ) : (
         <div className="anim-stagger grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -107,6 +140,35 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
               onTap={() => handleTap(m)}
             />
           ))}
+        </div>
+      )}
+
+      {accountFor && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 px-6 backdrop-blur-sm">
+          <div className="anim-fade w-full max-w-xs rounded-3xl border border-border bg-surface p-6 text-center">
+            <div className="text-lg font-semibold">{accountFor.full_name}</div>
+            <p className="mt-1 text-sm text-muted">
+              You need an account to use quick sign in. It only takes a minute
+              — then you can tap in here.
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <Link
+                href={`/login?create=1&name=${encodeURIComponent(
+                  accountFor.full_name,
+                )}`}
+                className="rounded-2xl bg-accent px-4 py-3 font-semibold text-background transition active:scale-[0.98]"
+              >
+                Create my account
+              </Link>
+              <button
+                type="button"
+                onClick={() => setAccountFor(null)}
+                className="rounded-2xl border border-border px-4 py-3 text-muted transition active:scale-[0.98]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -229,7 +291,13 @@ function RosterCard({
         {member.full_name}
       </div>
       <div className="text-xs text-muted">
-        {busy ? "…" : isIn ? `In · ${elapsed || "0m"}` : "Tap to sign in"}
+        {busy
+          ? "…"
+          : isIn
+            ? `In · ${elapsed || "0m"}`
+            : member.hasAccount
+              ? "Tap to sign in"
+              : "Needs an account"}
       </div>
     </button>
   );

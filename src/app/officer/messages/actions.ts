@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
+import { officerTitle } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { renderAnnouncementEmail, sendEmail, siteUrl } from "@/lib/email";
 
@@ -15,7 +16,7 @@ export async function sendMessage(
   _prev: SendMessageState,
   formData: FormData,
 ): Promise<SendMessageState> {
-  const { supabase, member } = await requireOfficer();
+  const { supabase, member } = await requireOfficer("messages");
 
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
@@ -64,7 +65,10 @@ export async function sendMessage(
     .from("messages")
     .insert({
       sender_id: member.id,
-      sender_role: member.role,
+      // Classic accounts store their role; custom officers store their title
+      // ("Treasurer") so the inbox shows who it came from even if the officer
+      // account is later renamed or deleted.
+      sender_role: member.role === "officer" ? officerTitle(member) : member.role,
       subject,
       body,
       audience,

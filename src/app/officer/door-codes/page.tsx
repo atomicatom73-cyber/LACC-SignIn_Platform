@@ -1,5 +1,5 @@
 import { requireOfficer } from "@/lib/auth";
-import { canManageDoorCodes } from "@/lib/roles";
+import { hasPermission } from "@/lib/roles";
 import type { DoorCode } from "@/lib/types";
 import { DoorCodesManager } from "./DoorCodesManager";
 
@@ -14,7 +14,7 @@ export default async function OfficerDoorCodesPage() {
     .order("created_at", { ascending: true });
 
   const codes: DoorCode[] = data ?? [];
-  const canManage = canManageDoorCodes(member.role);
+  const canManage = hasPermission(member, "door_codes");
 
   return (
     <div className="anim-fade">
@@ -23,7 +23,7 @@ export default async function OfficerDoorCodesPage() {
         <p className="mt-1 text-sm text-muted">
           {canManage
             ? "Add the studio's door and lock codes. Every active member can see them; deactivated members can't."
-            : "The studio's door and lock codes. Only the president and vice president can change them."}
+            : "The studio's door and lock codes. Changing them needs the door-codes permission — ask the president."}
         </p>
       </header>
 

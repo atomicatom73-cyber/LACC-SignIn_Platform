@@ -54,16 +54,26 @@ body {
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    /* Must end at `none`, not translateY(0): fill-mode keeps the final
+       keyframe, and any retained transform turns the element into the
+       containing block for position:fixed descendants — modals then center
+       on the page instead of the screen. */
+    transform: none;
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  /* Fill mode must be `backwards`, never `both`/`forwards`: a forwards-fill
+     of an animated transform keeps the element a containing block for
+     position:fixed descendants (Chrome holds the fill value as a matrix, not
+     `none`), which pins modals to the page instead of the screen. Backwards
+     still hides staggered children during their delay, and once the
+     animation ends every animation effect drops away. */
   .anim-fade {
-    animation: fade-up 0.35s ease-out both;
+    animation: fade-up 0.35s ease-out backwards;
   }
   .anim-stagger > * {
-    animation: fade-up 0.35s ease-out both;
+    animation: fade-up 0.35s ease-out backwards;
   }
   .anim-stagger > *:nth-child(2) {
     animation-delay: 0.04s;

@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { requireOfficer } from "@/lib/auth";
 import { generateMonthlyDraft } from "@/lib/chore-algorithm";
+import { parseSchedule } from "@/lib/chores";
 import { addMonths, monthLabel } from "@/lib/studio";
+import type { ChoreInterval } from "@/lib/types";
 
 /** Result shape shared by the useActionState forms on this page. */
 export type FormState = { error?: string; success?: string } | null;
@@ -18,23 +20,37 @@ function parseSlots(raw: FormDataEntryValue | null): number | { error: string } 
   return slots;
 }
 
-/** Add a job to the catalog (any officer). */
+function parseInterval(
+  raw: FormDataEntryValue | null,
+): ChoreInterval | { error: string } {
+  const value = String(raw ?? "month");
+  if (value === "month" || value === "first_half" || value === "second_half") {
+    return value;
+  }
+  return { error: "Pick a valid interval." };
+}
+
+/** Add a job to the catalog (officers with the jobs permission). */
 export async function createChore(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return { error: "Give the job a name." };
   const description = String(formData.get("description") ?? "").trim();
   const slots = parseSlots(formData.get("slots"));
   if (typeof slots !== "number") return slots;
+  const interval = parseInterval(formData.get("interval"));
+  if (typeof interval !== "string") return interval;
 
   const { error } = await supabase.from("chores").insert({
     name,
     description: description || null,
     slots,
+    interval,
+    scheduling_enabled: formData.get("scheduling_enabled") === "on",
   });
   if (error) {
     if (error.code === "23505") {
@@ -47,12 +63,12 @@ export async function createChore(
   return { success: `“${name}” added to the catalog.` };
 }
 
-/** Edit a catalog job's name, description, or slots (any officer). */
+/** Edit a catalog job's name, description, or slots (officers with the jobs permission). */
 export async function updateChore(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   const choreId = String(formData.get("chore_id") ?? "").trim();
   if (!choreId) return { error: "Missing job." };
@@ -61,10 +77,18 @@ export async function updateChore(
   const description = String(formData.get("description") ?? "").trim();
   const slots = parseSlots(formData.get("slots"));
   if (typeof slots !== "number") return slots;
+  const interval = parseInterval(formData.get("interval"));
+  if (typeof interval !== "string") return interval;
 
   const { error } = await supabase
     .from("chores")
-    .update({ name, description: description || null, slots })
+    .update({
+      name,
+      description: description || null,
+      slots,
+      interval,
+      scheduling_enabled: formData.get("scheduling_enabled") === "on",
+    })
     .eq("id", choreId);
   if (error) {
     if (error.code === "23505") {
@@ -82,7 +106,7 @@ export async function updateChore(
 export async function deleteChore(
   choreId: string,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!choreId) return { error: "Missing job." };
 
@@ -94,12 +118,67 @@ export async function deleteChore(
   return null;
 }
 
-/** Manually assign a job to a member for a month (any officer). */
+/** Pause / unpause a job. Paused jobs sit out assignment until unpaused. */
+export async function setChorePaused(
+  choreId: string,
+  paused: boolean,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!choreId) return { error: "Missing job." };
+
+  const { error } = await supabase
+    .from("chores")
+    .update({ paused })
+    .eq("id", choreId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/** Duplicate a job — identical description, slots, and interval. */
+export async function duplicateChore(
+  choreId: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!choreId) return { error: "Missing job." };
+
+  const { data: chore, error: fetchError } = await supabase
+    .from("chores")
+    .select("name, description, slots, interval, paused, scheduling_enabled")
+    .eq("id", choreId)
+    .maybeSingle();
+  if (fetchError) return { error: fetchError.message };
+  if (!chore) return { error: "Job not found." };
+
+  // chores.name is unique — walk "X (copy)", "X (copy 2)", … until one fits.
+  for (let n = 1; n <= 20; n++) {
+    const name = n === 1 ? `${chore.name} (copy)` : `${chore.name} (copy ${n})`;
+    const { error } = await supabase.from("chores").insert({
+      name,
+      description: chore.description,
+      slots: chore.slots,
+      interval: chore.interval,
+      paused: chore.paused,
+      scheduling_enabled: chore.scheduling_enabled,
+    });
+    if (!error) {
+      revalidatePath("/officer/chores");
+      return null;
+    }
+    if (error.code !== "23505") return { error: error.message };
+  }
+  return { error: "Too many copies of this job already exist." };
+}
+
+/** Manually assign a job to a member for a month (officers with the jobs permission). */
 export async function assignChore(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { supabase, member } = await requireOfficer();
+  const { supabase, member } = await requireOfficer("jobs");
 
   const choreId = String(formData.get("chore_id") ?? "").trim();
   const memberId = String(formData.get("member_id") ?? "").trim();
@@ -125,11 +204,11 @@ export async function assignChore(
   return { success: "Assigned." };
 }
 
-/** Remove an assignment entirely (any officer). */
+/** Remove an assignment entirely (officers with the jobs permission). */
 export async function removeAssignment(
   assignmentId: string,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!assignmentId) return { error: "Missing assignment." };
 
@@ -144,12 +223,41 @@ export async function removeAssignment(
   return null;
 }
 
-/** Mark an assignment completed / back to pending (any officer). */
+/**
+ * Set (or clear) when the member will do a job — the officer-side twin of
+ * setMyChoreSchedule in /me. Date and time come off the form inputs on the
+ * studio wall clock; an empty date clears the appointment.
+ */
+export async function setAssignmentSchedule(
+  assignmentId: string,
+  date: string,
+  time: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!assignmentId) return { error: "Missing assignment." };
+
+  const scheduled = parseSchedule(date, time);
+  if (typeof scheduled !== "string" && scheduled !== null) return scheduled;
+
+  const { error } = await supabase
+    .from("chore_assignments")
+    .update({ scheduled_at: scheduled })
+    .eq("id", assignmentId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/chores");
+  revalidatePath("/officer/members");
+  revalidatePath("/me");
+  return null;
+}
+
+/** Mark an assignment completed / back to pending (officers with the jobs permission). */
 export async function setAssignmentStatus(
   assignmentId: string,
   completed: boolean,
 ): Promise<{ error: string } | null> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!assignmentId) return { error: "Missing assignment." };
 
@@ -173,10 +281,17 @@ export type ReshufflePreview = {
   proposals: {
     choreId: string;
     choreName: string;
+    /** How many people this job wants, for the fill counter on its row. */
+    slots: number;
     members: { id: string; name: string }[];
   }[];
   creditSpends: { id: string; name: string }[];
   absentNames: string[];
+  officerNames: string[];
+  /** Everyone who was in the draw (not an officer, absent, or holding a
+   *  credit) — the UI diffs this against the edited draft for the coverage
+   *  chart and the "no job" list. */
+  eligibleMembers: { id: string; name: string }[];
   warnings: string[];
   existingCount: number;
 };
@@ -188,7 +303,7 @@ export type ReshufflePreview = {
 export async function previewReshuffle(
   targetMonth: string,
 ): Promise<{ error: string } | { preview: ReshufflePreview }> {
-  const { supabase } = await requireOfficer();
+  const { supabase } = await requireOfficer("jobs");
 
   if (!MONTH_RE.test(targetMonth)) return { error: "Bad month." };
   const prevMonth = addMonths(targetMonth, -1);
@@ -197,12 +312,13 @@ export async function previewReshuffle(
     await Promise.all([
       supabase
         .from("chores")
-        .select("id, name, slots")
+        .select("id, name, slots, interval")
         .eq("active", true)
+        .eq("paused", false)
         .order("name", { ascending: true }),
       supabase
         .from("members")
-        .select("id, full_name")
+        .select("id, full_name, officer_status")
         .eq("active", true)
         .eq("role", "member")
         .order("full_name", { ascending: true }),
@@ -229,7 +345,7 @@ export async function previewReshuffle(
   const chores = choresRes.data ?? [];
   const members = membersRes.data ?? [];
   if (chores.length === 0) {
-    return { error: "No active jobs in the catalog — add some first." };
+    return { error: "No unpaused jobs in the list — add or unpause some first." };
   }
   if (members.length === 0) {
     return { error: "No active members to assign jobs to." };
@@ -244,17 +360,26 @@ export async function previewReshuffle(
     creditAvailableMemberIds: [
       ...new Set((creditsRes.data ?? []).map((c) => c.member_id)),
     ],
+    officerMemberIds: members
+      .filter((m) => m.officer_status)
+      .map((m) => m.id),
   });
 
   const nameOf = new Map(members.map((m) => [m.id, m.full_name]));
-  const choreName = new Map(chores.map((c) => [c.id, c.name]));
+  const chore = new Map(chores.map((c) => [c.id, c]));
+  const exempt = new Set([
+    ...draft.exemptOfficers,
+    ...draft.exemptAbsent,
+    ...draft.creditsToConsume,
+  ]);
 
   return {
     preview: {
       targetMonth,
       proposals: draft.proposals.map((p) => ({
         choreId: p.chore_id,
-        choreName: choreName.get(p.chore_id) ?? "Unknown job",
+        choreName: chore.get(p.chore_id)?.name ?? "Unknown job",
+        slots: chore.get(p.chore_id)?.slots ?? 0,
         members: p.member_ids.map((id) => ({
           id,
           name: nameOf.get(id) ?? "Unknown member",
@@ -265,6 +390,12 @@ export async function previewReshuffle(
         name: nameOf.get(id) ?? "Unknown member",
       })),
       absentNames: draft.exemptAbsent.map((id) => nameOf.get(id) ?? "Unknown"),
+      officerNames: draft.exemptOfficers.map(
+        (id) => nameOf.get(id) ?? "Unknown",
+      ),
+      eligibleMembers: members
+        .filter((m) => !exempt.has(m.id))
+        .map((m) => ({ id: m.id, name: m.full_name })),
       warnings: draft.warnings,
       existingCount: existingRes.count ?? 0,
     },
@@ -280,7 +411,7 @@ export async function publishReshuffle(input: {
   assignments: { chore_id: string; member_id: string }[];
   creditMemberIds: string[];
 }): Promise<FormState> {
-  const { supabase, member } = await requireOfficer();
+  const { supabase, member } = await requireOfficer("jobs");
 
   const { targetMonth } = input;
   if (!MONTH_RE.test(targetMonth)) return { error: "Bad month." };

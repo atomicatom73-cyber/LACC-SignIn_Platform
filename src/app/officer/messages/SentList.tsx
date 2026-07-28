@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ROLE_LABELS } from "@/lib/roles";
+import { roleOrTitleLabel } from "@/lib/roles";
 import { formatStudioDate, formatStudioDateTime } from "@/lib/studio";
 import type { Message, MessageAudience } from "@/lib/types";
 
@@ -47,7 +47,7 @@ export function SentList({ messages }: { messages: SentMessage[] }) {
           >
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-xs font-semibold uppercase tracking-wide text-accent">
-                {ROLE_LABELS[message.sender_role]}
+                {roleOrTitleLabel(message.sender_role)}
               </span>
               <span className="shrink-0 text-xs text-muted">
                 {formatStudioDateTime(message.created_at)}

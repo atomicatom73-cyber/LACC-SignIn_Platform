@@ -1,12 +1,20 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { isOfficer, type Role } from "@/lib/roles";
+import {
+  hasPermission,
+  isOfficer,
+  type Permission,
+  type PermissionSet,
+  type Role,
+} from "@/lib/roles";
 
 export type CurrentMember = {
   id: string;
   full_name: string;
   role: Role;
   active: boolean;
+  officer_title: string | null;
+  permissions: PermissionSet;
 };
 
 /**
@@ -23,7 +31,7 @@ export async function requireMember() {
 
   const { data } = await supabase
     .from("members")
-    .select("id, full_name, role, active")
+    .select("id, full_name, role, active, officer_title, permissions")
     .eq("user_id", user.id)
     .single();
 
@@ -31,12 +39,12 @@ export async function requireMember() {
 }
 
 /**
- * Gate an officer page or action. Redirects members to /me; when `roles` is
- * given, officers outside that list land back on /officer.
+ * Gate an officer page or action. Redirects members to /me; when `permission`
+ * is given, officers who don't hold it land back on /officer.
  */
-export async function requireOfficer(roles?: Role[]) {
+export async function requireOfficer(permission?: Permission) {
   const { supabase, user, member } = await requireMember();
   if (!member || !isOfficer(member.role)) redirect("/me");
-  if (roles && !roles.includes(member.role)) redirect("/officer");
+  if (permission && !hasPermission(member, permission)) redirect("/officer");
   return { supabase, user, member };
 }

@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Logo } from "@/components/Brand";
 import { PasswordInput } from "@/components/PasswordInput";
-import { OFFICER_ACCOUNTS, OFFICER_ROLES, ROLE_LABELS } from "@/lib/roles";
 import {
   registerMember,
   resetOfficerPasswordViaMember,
@@ -14,9 +13,13 @@ import {
   sendPasswordResetEmail,
   signIn,
   signInMember,
+  signInOfficer,
 } from "./actions";
 
 type Mode = "member" | "officer";
+
+/** Officer accounts as the login page lists them (id + display title). */
+export type OfficerOption = { id: string; title: string };
 type MemberView =
   | "signin"
   | "create"
@@ -60,16 +63,27 @@ const HEADINGS: Record<MemberView, { title: string; blurb: string }> = {
 const FIELD_CLASS =
   "rounded-2xl border border-border bg-surface px-5 py-4 text-lg outline-none focus:border-accent";
 
-export function LoginForm({ initialError }: { initialError?: string | null }) {
+export function LoginForm({
+  initialError,
+  officers,
+  initialView,
+  initialName,
+}: {
+  initialError?: string | null;
+  officers: OfficerOption[];
+  initialView?: "create";
+  initialName?: string;
+}) {
   const [mode, setMode] = useState<Mode>("member");
-  const [view, setView] = useState<MemberView>("signin");
+  const [view, setView] = useState<MemberView>(initialView ?? "signin");
 
   const heading =
     mode === "member"
       ? HEADINGS[view]
       : {
           title: "Welcome back",
-          blurb: "Shared officer account — pick your role and enter its password.",
+          blurb:
+            "Shared officer account — pick the account and enter its password.",
         };
 
   return (
@@ -108,7 +122,7 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
 
         <div key={`${mode}-${view}`} className="anim-fade">
           {mode === "officer" ? (
-            <OfficerLogin />
+            <OfficerLogin officers={officers} />
           ) : view === "forgot-password" ? (
             <ForgotPassword onBack={() => setView("signin")} />
           ) : view === "forgot-pin" ? (
@@ -118,6 +132,7 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
           ) : (
             <MemberLogin
               initialError={initialError}
+              initialName={initialName}
               view={view}
               setView={setView}
             />
@@ -130,16 +145,18 @@ export function LoginForm({ initialError }: { initialError?: string | null }) {
 
 function MemberLogin({
   initialError,
+  initialName,
   view,
   setView,
 }: {
   initialError?: string | null;
+  initialName?: string;
   view: "signin" | "create";
   setView: (v: MemberView) => void;
 }) {
   const router = useRouter();
   const creating = view === "create";
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName ?? "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pin, setPin] = useState("");
@@ -598,10 +615,10 @@ function ForgotPasswordEmail({ onBack }: { onBack: () => void }) {
   );
 }
 
-function OfficerLogin() {
+function OfficerLogin({ officers }: { officers: OfficerOption[] }) {
   const router = useRouter();
   const [recovering, setRecovering] = useState(false);
-  const [role, setRole] = useState<(typeof OFFICER_ROLES)[number]>("president");
+  const [officerId, setOfficerId] = useState(officers[0]?.id ?? "");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -612,13 +629,14 @@ function OfficerLogin() {
     setMessage("");
 
     try {
-      // Shared officer logins are name-based; the address is synthetic.
-      const signInResult = await signIn(OFFICER_ACCOUNTS[role], password);
+      // Shared officer logins are title-based; the address is synthetic and
+      // resolved server-side from the picked account.
+      const signInResult = await signInOfficer(officerId, password);
       if ("error" in signInResult) {
         setStatus("error");
         setMessage(
           signInResult.error === "Invalid login credentials"
-            ? "Wrong password for that role."
+            ? "Wrong password for that account."
             : signInResult.error,
         );
         return;
@@ -632,11 +650,20 @@ function OfficerLogin() {
     }
   }
 
+  if (officers.length === 0) {
+    return (
+      <p className="text-center text-sm text-muted">
+        No officer accounts are set up yet.
+      </p>
+    );
+  }
+
   if (recovering) {
     return (
       <OfficerRecover
-        role={role}
-        setRole={setRole}
+        officers={officers}
+        officerId={officerId}
+        setOfficerId={setOfficerId}
         onBack={() => setRecovering(false)}
       />
     );
@@ -645,18 +672,18 @@ function OfficerLogin() {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
-        {OFFICER_ROLES.map((r) => (
+        {officers.map((o) => (
           <button
-            key={r}
+            key={o.id}
             type="button"
-            onClick={() => setRole(r)}
+            onClick={() => setOfficerId(o.id)}
             className={`rounded-2xl border px-5 py-3 text-left text-lg transition ${
-              role === r
+              officerId === o.id
                 ? "border-accent bg-accent/10 font-semibold"
                 : "border-border bg-surface text-muted"
             }`}
           >
-            {ROLE_LABELS[r]}
+            {o.title}
           </button>
         ))}
       </div>
@@ -686,8 +713,8 @@ function OfficerLogin() {
         Forgot the password?
       </button>
       <p className="text-center text-xs text-muted">
-        Officer accounts (President, Vice President, Volunteer Coordinator) are
-        shared logins handed to whoever holds the role.
+        Officer accounts are shared logins handed to whoever currently holds
+        the job.
       </p>
     </form>
   );
@@ -698,12 +725,14 @@ function OfficerLogin() {
  * an officer linked from their account page (password or studio PIN).
  */
 function OfficerRecover({
-  role,
-  setRole,
+  officers,
+  officerId,
+  setOfficerId,
   onBack,
 }: {
-  role: (typeof OFFICER_ROLES)[number];
-  setRole: (r: (typeof OFFICER_ROLES)[number]) => void;
+  officers: OfficerOption[];
+  officerId: string;
+  setOfficerId: (id: string) => void;
   onBack: () => void;
 }) {
   const router = useRouter();
@@ -720,7 +749,7 @@ function OfficerRecover({
 
     try {
       const result = await resetOfficerPasswordViaMember(
-        role,
+        officerId,
         name,
         credential,
         newPassword,
@@ -752,21 +781,21 @@ function OfficerRecover({
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <p className="text-center text-sm text-muted">
         Reset an officer password using the personal member account linked to
-        the role.
+        it.
       </p>
       <div className="flex flex-col gap-2">
-        {OFFICER_ROLES.map((r) => (
+        {officers.map((o) => (
           <button
-            key={r}
+            key={o.id}
             type="button"
-            onClick={() => setRole(r)}
+            onClick={() => setOfficerId(o.id)}
             className={`rounded-2xl border px-5 py-3 text-left text-base transition ${
-              role === r
+              officerId === o.id
                 ? "border-accent bg-accent/10 font-semibold"
                 : "border-border bg-surface text-muted"
             }`}
           >
-            {ROLE_LABELS[r]}
+            {o.title}
           </button>
         ))}
       </div>

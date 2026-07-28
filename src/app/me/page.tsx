@@ -16,6 +16,7 @@ import {
   totalHours,
   type Shift,
 } from "@/lib/time";
+import type { ChoreInterval } from "@/lib/types";
 import { Wordmark } from "@/components/Brand";
 import { AnnouncementsBanner } from "@/components/AnnouncementsBanner";
 import { LogoutButton } from "@/components/LogoutButton";
@@ -59,7 +60,9 @@ export default async function MePage() {
         .order("signed_in_at", { ascending: false }),
       supabase
         .from("chore_assignments")
-        .select("id, month, status, completed_at, chores(name, description)")
+        .select(
+          "id, month, status, completed_at, scheduled_at, chores(name, description, interval, scheduling_enabled)",
+        )
         .eq("member_id", member.id)
         .or(`month.eq.${month},status.eq.pending`)
         .order("month", { ascending: false }),
@@ -100,7 +103,13 @@ export default async function MePage() {
     month: string;
     status: "pending" | "completed";
     completed_at: string | null;
-    chores: { name: string; description: string | null } | null;
+    scheduled_at: string | null;
+    chores: {
+      name: string;
+      description: string | null;
+      interval: ChoreInterval;
+      scheduling_enabled: boolean;
+    } | null;
   };
   const chores: MyChore[] = ((choresRes.data ?? []) as unknown as ChoreRow[]).map(
     (a) => ({
@@ -109,6 +118,9 @@ export default async function MePage() {
       status: a.status,
       choreName: a.chores?.name ?? "Job",
       choreDescription: a.chores?.description ?? null,
+      choreInterval: a.chores?.interval ?? "month",
+      choreScheduling: a.chores?.scheduling_enabled ?? false,
+      scheduledAt: a.scheduled_at,
     }),
   );
 
@@ -157,7 +169,7 @@ export default async function MePage() {
           </span>
         )}
         <Link
-          href="/kiosk/student"
+          href="/kiosk/student?from=me"
           className="rounded-2xl border border-border bg-surface px-4 py-3 transition active:scale-[0.98]"
         >
           🎓 Sign in as student

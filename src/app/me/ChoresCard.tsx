@@ -1,8 +1,14 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { monthLabel } from "@/lib/studio";
-import { toggleMyChore } from "./actions";
+import { useOptimistic, useState, useTransition } from "react";
+import { dueLabel } from "@/lib/chores";
+import {
+  formatStudioDateTime,
+  monthLabel,
+  studioDateTimeParts,
+} from "@/lib/studio";
+import type { ChoreInterval } from "@/lib/types";
+import { setMyChoreSchedule, toggleMyChore } from "./actions";
 
 export type MyChore = {
   id: string;
@@ -10,6 +16,11 @@ export type MyChore = {
   status: "pending" | "completed";
   choreName: string;
   choreDescription: string | null;
+  choreInterval: ChoreInterval;
+  /** This job asks when you'll do it. */
+  choreScheduling: boolean;
+  /** When you said you'd do it; null until you pick. */
+  scheduledAt: string | null;
 };
 
 export function ChoresCard({
@@ -27,10 +38,25 @@ export function ChoresCard({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // The card flips instantly; the server settles it (and a failure reverts).
+  const [optimisticChores, flipOptimistic] = useOptimistic(
+    chores,
+    (current, id: string) =>
+      current.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              status: c.status === "completed" ? "pending" : "completed",
+            }
+          : c,
+      ),
+  );
+
   function handleToggle(id: string) {
     setBusyId(id);
     setError(null);
     startTransition(async () => {
+      flipOptimistic(id);
       const res = await toggleMyChore(id);
       if (res?.error) setError(res.error);
       setBusyId(null);
@@ -56,7 +82,7 @@ export function ChoresCard({
         </p>
       )}
 
-      {chores.length === 0 ? (
+      {optimisticChores.length === 0 ? (
         !absentThisMonth && (
           <p className="mt-3 text-sm text-muted">
             No jobs assigned right now. Enjoy the wheel! 🏺
@@ -64,18 +90,19 @@ export function ChoresCard({
         )
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
-          {chores.map((c) => {
+          {optimisticChores.map((c) => {
             const done = c.status === "completed";
             const carried = c.month < currentMonth;
             return (
               <li
                 key={c.id}
-                className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 ${
+                className={`rounded-xl border px-3 py-3 ${
                   done
                     ? "border-success/40 bg-success/10"
                     : "border-border bg-surface-2"
                 }`}
               >
+                <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span
@@ -86,6 +113,11 @@ export function ChoresCard({
                     {carried && (
                       <span className="rounded-full border border-danger/40 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger">
                         from {monthLabel(c.month)}
+                      </span>
+                    )}
+                    {!done && !carried && (
+                      <span className="rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                        {dueLabel(c.choreInterval)}
                       </span>
                     )}
                   </div>
@@ -106,6 +138,13 @@ export function ChoresCard({
                 >
                   {pending && busyId === c.id ? "…" : done ? "Undo" : "Done ✓"}
                 </button>
+                </div>
+                {c.choreScheduling && !done && (
+                  <MyScheduleRow
+                    assignmentId={c.id}
+                    scheduledAt={c.scheduledAt}
+                  />
+                )}
               </li>
             );
           })}
@@ -114,5 +153,118 @@ export function ChoresCard({
 
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
     </section>
+  );
+}
+
+const SCHEDULE_INPUT =
+  "min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-2 text-sm outline-none focus:border-accent";
+
+/**
+ * "When will you do it?" — only on jobs an officer marked schedulable. Shows
+ * the pick as a line of text once it's made, so the card stays calm; tapping
+ * it opens the date and time inputs again.
+ */
+function MyScheduleRow({
+  assignmentId,
+  scheduledAt,
+}: {
+  assignmentId: string;
+  scheduledAt: string | null;
+}) {
+  const initial = scheduledAt
+    ? studioDateTimeParts(scheduledAt)
+    : { date: "", time: "" };
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(initial.date);
+  const [time, setTime] = useState(initial.time);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const save = (nextDate: string, nextTime: string) => {
+    setDate(nextDate);
+    setTime(nextTime);
+    startTransition(async () => {
+      const res = await setMyChoreSchedule(assignmentId, nextDate, nextTime);
+      if (res?.error) {
+        setError(res.error);
+      } else {
+        setError(null);
+        setOpen(false);
+      }
+    });
+  };
+
+  if (!open) {
+    return (
+      <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
+        <span className="min-w-0 truncate text-xs">
+          {scheduledAt ? (
+            <>
+              <span className="text-muted">You&apos;re doing this</span>{" "}
+              <span className="font-medium">
+                {formatStudioDateTime(scheduledAt)}
+              </span>
+            </>
+          ) : (
+            <span className="text-muted">When will you do this?</span>
+          )}
+        </span>
+        <button
+          onClick={() => setOpen(true)}
+          className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition active:scale-[0.97] ${
+            scheduledAt
+              ? "border-border text-muted"
+              : "border-accent/40 bg-accent/10 text-accent"
+          }`}
+        >
+          {scheduledAt ? "Change" : "Pick a time"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 border-t border-border pt-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className={SCHEDULE_INPUT}
+          aria-label="Date you'll do this job"
+        />
+        <input
+          type="time"
+          value={time}
+          onChange={(e) => setTime(e.target.value)}
+          className={SCHEDULE_INPUT}
+          aria-label="Time you'll do this job"
+        />
+        <button
+          onClick={() => save(date, time)}
+          disabled={pending || !date}
+          className="shrink-0 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-background transition active:scale-[0.97] disabled:opacity-60"
+        >
+          {pending ? "…" : "Save"}
+        </button>
+        {scheduledAt && (
+          <button
+            onClick={() => save("", "")}
+            disabled={pending}
+            className="shrink-0 rounded-lg border border-border px-2.5 py-2 text-xs font-medium text-danger transition active:scale-[0.97] disabled:opacity-60"
+          >
+            Clear
+          </button>
+        )}
+        <button
+          onClick={() => setOpen(false)}
+          disabled={pending}
+          className="shrink-0 rounded-lg border border-border px-2.5 py-2 text-xs font-medium text-muted transition active:scale-[0.97] disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+    </div>
   );
 }

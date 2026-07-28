@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ROLE_LABELS, type Role } from "@/lib/roles";
+import { ROLE_LABELS } from "@/lib/roles";
 import { MemberDetail, type ChipTone, type MemberSummary } from "./MemberDetail";
 
 export type MemberGroup = { title: string; members: MemberSummary[] };
@@ -17,12 +17,16 @@ const CHIP_CLASSES: Record<ChipTone, string> = {
 /** Searchable, grouped roster; tap a row to open its MemberDetail. */
 export function MembersList({
   groups,
-  viewerRole,
+  viewerCanManage,
+  viewerCanJobs,
+  viewerIsPresident,
   month,
   jobCatalog,
 }: {
   groups: MemberGroup[];
-  viewerRole: Role;
+  viewerCanManage: boolean;
+  viewerCanJobs: boolean;
+  viewerIsPresident: boolean;
   month: string;
   jobCatalog: { id: string; name: string }[];
 }) {
@@ -77,7 +81,12 @@ export function MembersList({
                       </span>
                       {member.role !== "member" && (
                         <span className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
-                          {ROLE_LABELS[member.role]}
+                          {member.officerTitle ?? ROLE_LABELS[member.role]}
+                        </span>
+                      )}
+                      {member.role === "member" && member.officerStatus && (
+                        <span className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                          Officer
                         </span>
                       )}
                       {member.role === "member" && !member.hasAccount && (
@@ -106,7 +115,9 @@ export function MembersList({
                   {expanded && (
                     <MemberDetail
                       member={member}
-                      viewerRole={viewerRole}
+                      viewerCanManage={viewerCanManage}
+                      viewerCanJobs={viewerCanJobs}
+                      viewerIsPresident={viewerIsPresident}
                       month={month}
                       jobCatalog={jobCatalog}
                     />

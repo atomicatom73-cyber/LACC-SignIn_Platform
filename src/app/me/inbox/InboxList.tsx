@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { ROLE_LABELS } from "@/lib/roles";
+import { roleOrTitleLabel } from "@/lib/roles";
 import { formatStudioDateTime } from "@/lib/studio";
 import type { Message } from "@/lib/types";
 import { markRead } from "./actions";
@@ -41,7 +41,7 @@ export function InboxList({ items }: { items: InboxItem[] }) {
                   unread ? "text-background/80" : "text-accent"
                 }`}
               >
-                From the {ROLE_LABELS[item.sender_role]}
+                From the {roleOrTitleLabel(item.sender_role)}
               </span>
               {unread && (
                 <span className="flex shrink-0 items-center gap-1.5">
