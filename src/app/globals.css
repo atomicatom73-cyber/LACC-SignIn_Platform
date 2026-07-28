@@ -1,16 +1,30 @@
 @import "tailwindcss";
 
+/* Warm light theme, keyed to the palette the transactional emails already use
+   (src/lib/email.ts) so the app and its mail read as one brand.
+
+   Two invariants the whole app leans on — keep them if you retune anything:
+   1. `--background` doubles as the text color *on* filled accent/success/danger
+      buttons (`bg-accent text-background`, ~60 call sites). Every fill token
+      must therefore stay dark enough for 4.5:1 against it.
+   2. `--surface` sits above `--background`, `--surface-2` recedes below it.
+      Surfaces can't lift past white here, so secondary rows tint warmer/darker
+      instead of lighter — the one place this isn't a literal inversion. */
 :root {
-  --background: #0f1115;
-  --surface: #181b22;
-  --surface-2: #20242e;
-  --border: #2c313d;
-  --foreground: #f4f5f7;
-  --muted: #9aa3b2;
-  --accent: #ff7a45;
-  --accent-strong: #ff5e1f;
-  --success: #34d399;
-  --danger: #f87171;
+  color-scheme: light;
+  --background: #faf7f2;
+  --surface: #fffdfa;
+  --surface-2: #f4eee4;
+  --border: #e6ded1;
+  --foreground: #1f1b16;
+  --muted: #756b5c;
+  --accent: #b0592c;
+  --accent-strong: #8f4520;
+  --success: #2f6f4f;
+  --danger: #b3261e;
+  /* Modal dimming. A translucent *page* color no longer separates a light
+     sheet from a light page, so overlays darken with warm ink instead. */
+  --scrim: rgb(31 27 22 / 0.45);
 }
 
 @theme inline {
@@ -116,6 +130,11 @@ a {
   touch-action: manipulation;
 }
 
+/* Shared dimming layer behind modals and sheets. */
+.scrim {
+  background: var(--scrim);
+}
+
 /* On touch devices, scrollable containers (the officer nav, message lists)
    otherwise render a persistent gray scrollbar track. Hide the chrome —
    swipe-to-scroll still works — while keeping real scrollbars on desktop
@@ -133,10 +152,10 @@ a {
 @keyframes announce-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(255, 122, 69, 0.55);
+    box-shadow: 0 0 0 0 rgba(176, 89, 44, 0.55);
   }
   50% {
-    box-shadow: 0 0 0 12px rgba(255, 122, 69, 0);
+    box-shadow: 0 0 0 12px rgba(176, 89, 44, 0);
   }
 }
 
@@ -149,12 +168,14 @@ a {
   }
 }
 
+/* The sweep runs dark→light→dark across the two brand terracottas rather than
+   peaking on a pale highlight: the banner's label is `text-background` (cream),
+   so a light peak would wash the text out at mid-shimmer. */
 .announce-banner {
   background-image: linear-gradient(
     100deg,
     var(--accent-strong) 0%,
     var(--accent) 35%,
-    #ffb38a 50%,
     var(--accent) 65%,
     var(--accent-strong) 100%
   );

@@ -144,7 +144,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
       )}
 
       {accountFor && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 px-6 backdrop-blur-sm">
+        <div className="scrim fixed inset-0 z-40 flex items-center justify-center px-6 backdrop-blur-sm">
           <div className="anim-fade w-full max-w-xs rounded-3xl border border-border bg-surface p-6 text-center">
             <div className="text-lg font-semibold">{accountFor.full_name}</div>
             <p className="mt-1 text-sm text-muted">
@@ -173,7 +173,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
       )}
 
       {pinFor && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 px-6 backdrop-blur-sm">
+        <div className="scrim fixed inset-0 z-40 flex items-center justify-center px-6 backdrop-blur-sm">
           <div className="anim-fade w-full max-w-xs rounded-3xl border border-border bg-surface p-6 text-center">
             <div className="text-lg font-semibold">{pinFor.full_name}</div>
             <p className="mt-1 text-sm text-muted">

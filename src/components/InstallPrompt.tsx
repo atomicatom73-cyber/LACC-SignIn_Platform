@@ -118,7 +118,7 @@ export function InstallPrompt() {
         className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 print:hidden"
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
       >
-        <div className="anim-fade flex w-full max-w-md items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3 shadow-lg shadow-black/40">
+        <div className="anim-fade flex w-full max-w-md items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3 shadow-lg shadow-foreground/10">
           <span className="text-2xl" aria-hidden>
             📲
           </span>
@@ -146,7 +146,7 @@ export function InstallPrompt() {
 
       {showSheet && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4"
+          className="scrim fixed inset-0 z-50 flex items-end justify-center px-4"
           onClick={() => setShowSheet(false)}
         >
           <div
