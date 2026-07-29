@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { SessionKeeper } from "@/components/SessionKeeper";
 import { InstallPrompt } from "@/components/InstallPrompt";
+import { OfflineQueueSync } from "@/components/OfflineQueueSync";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -53,6 +54,10 @@ export default function RootLayout({
           (clipped navs, broken sticky). Pages manage their own height. */}
       <body className="min-h-full">
         <SessionKeeper />
+        {/* Mounted app-wide, not just on the kiosk: a tablet that lost wifi
+            mid-shift gets left on whatever screen it was on, and the queue
+            still needs to drain from there. Renders nothing when empty. */}
+        <OfflineQueueSync />
         {children}
         <InstallPrompt />
         <Analytics />

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Wordmark } from "@/components/Brand";
+import { ServerClock } from "@/components/ServerClock";
+import { InStudioCount } from "./InStudioCount";
 import { RosterGrid, type RosterMember } from "./RosterGrid";
 
 export const dynamic = "force-dynamic";
@@ -43,17 +45,14 @@ export default async function KioskPage() {
       (a, b) => Number(b.openSince !== null) - Number(a.openSince !== null),
     );
 
-  const inCount = roster.filter((m) => m.openSince !== null).length;
-
   return (
     <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-4xl flex-col px-5 py-6">
+      {/* Measures tablet-vs-server clock drift for the offline queue. */}
+      <ServerClock />
       <header className="flex items-center justify-between">
         <Wordmark />
         <div className="flex items-center gap-4">
-          <span className="rounded-full border border-border bg-surface px-3 py-1 text-sm text-muted">
-            <span className="font-semibold text-success">{inCount}</span> in the
-            studio
-          </span>
+          <InStudioCount members={roster} />
           <Link href="/" className="text-sm text-muted">
             ← Back
           </Link>

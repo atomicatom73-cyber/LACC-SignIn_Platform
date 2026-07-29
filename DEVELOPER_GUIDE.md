@@ -248,6 +248,16 @@ Related behavior elsewhere: completed chores disappear from the member's view wh
 
 The kiosk is a shared tablet with no logged-in user, so its server actions (`app/kiosk/actions.ts`) use the **admin client**. Security model: `KIOSK_PIN` unlocks the screen, members with a personal PIN must enter it to tap in/out, and the actions validate everything server-side. When a member signs out, their open guests are signed out with them. If you add kiosk features, keep every check in the server action — nothing on the kiosk client can be trusted.
 
+### The kiosk offline queue: taps survive a wifi drop
+
+The studio's wifi drops, so a tap that can't reach the server is saved on the tablet and replayed later instead of being lost. Three parts:
+
+- **`public/sw.js`** keeps the three `/kiosk*` screens loadable offline. Documents are **network-first** (online you always get the current build; the cache is only a fallback), `/_next/static/*` is cache-first because it's content-hashed, and POSTs are never intercepted so server actions fail fast rather than hang. Only public kiosk routes are cached — never `/me` or `/officer`, since a cached member page replayed to the next person on a shared tablet would leak their data. Bump `CACHE_VERSION` to evict everything.
+- **`lib/offline-queue.ts`** is the IndexedDB queue. Each event's id doubles as the `id` of the row it will insert, so a replay loses to the primary key instead of double-recording someone. Events say `"in"`/`"out"`, never `"toggle"` — replaying a toggle twice is a bug. `<ServerClock>` measures tablet-vs-server clock drift from a live `/api/now` fetch; **don't** switch it back to a server-rendered timestamp, because from a cached page that value is as old as the cache and backdates every tap.
+- **`app/kiosk/sync-actions.ts`** replays a batch oldest-first (a guest's host and a student's sign-in must exist before the events that depend on them) and reports each event as applied / duplicate / rejected / retry. It accepts a client-supplied `signed_in_at`, clamped to "not in the future, not older than a week". A queued sign-out that arrives after `close_stale_shifts()` swept the shift *corrects* the synthetic end-of-day time and clears the "Forgot to sign out" flag.
+
+Gotchas: a queued tap carries the typed PIN so the sync can verify it server-side — the tablet can't check it while offline, so a wrong PIN surfaces as a rejection banner later, not at the kiosk. Anything that shows "who's in" must apply `applyQueuedShifts()` (see `queued-roster.ts`) or it will disagree with the cards.
+
 ### Calendar: Google is the source of truth
 
 Events flow one way: the studio's **public** Google calendar → `syncGoogleCalendar()` → upsert into `events` (matched on `google_event_id`, rolling window ~1 month back / 6 ahead). Sync triggers on calendar page load (throttled via `sync_state`) with a once-daily Vercel Cron backstop (`vercel.json` → `/api/calendar-sync`, guarded by `CRON_SECRET`). Google-sourced rows get overwritten on the next sync — **don't build features that edit `source = 'google'` events in-app**; edit them in Google Calendar. Native events (president/VP create inline on `/calendar`) are untouched by sync. Recurrence expansion for the month grid lives in `lib/events.ts`.

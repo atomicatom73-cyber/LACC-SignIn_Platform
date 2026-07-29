@@ -4,15 +4,17 @@ import { useEffect, useOptimistic, useRef, useState, useTransition } from "react
 import Link from "next/link";
 import { formatDuration } from "@/lib/time";
 import { PasswordInput } from "@/components/PasswordInput";
+import { useOfflineQueue } from "@/components/OfflineQueueSync";
+import {
+  enqueue,
+  isOffline,
+  newEventId,
+  studioNowIso,
+} from "@/lib/offline-queue";
 import { toggleKioskShift } from "./actions";
+import { applyQueuedShifts, type RosterMember } from "./queued-roster";
 
-export type RosterMember = {
-  id: string;
-  full_name: string;
-  hasPin: boolean;
-  hasAccount: boolean;
-  openSince: string | null;
-};
+export type { RosterMember };
 
 export function RosterGrid({ members }: { members: RosterMember[] }) {
   const [pending, startTransition] = useTransition();
@@ -24,12 +26,19 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
   const pinInputRef = useRef<HTMLInputElement>(null);
+  const { pending: queued, refresh: refreshQueue } = useOfflineQueue();
+
+  // Taps taken while offline aren't in the roster the server sent — and when
+  // the page is served from the service worker cache, that roster can be hours
+  // stale. Lay the queue over the top so whoever is signed in *according to
+  // this tablet* is what the cards show, even across an offline reload.
+  const roster = applyQueuedShifts(members, queued);
 
   // Cards flip the moment they're tapped; the server round-trip (and the
   // roster refresh it triggers) settles the real state behind the scenes,
   // and a failed toggle just snaps back.
   const [optimisticMembers, flipOptimistic] = useOptimistic(
-    members,
+    roster,
     (current, memberId: string) =>
       current.map((m) =>
         m.id === memberId
@@ -42,11 +51,59 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
     m.full_name.toLowerCase().includes(query.trim().toLowerCase()),
   );
 
+  /**
+   * Save a tap on the tablet for later. Keeps the direction the card was
+   * showing, so a replay can't flip someone the wrong way, and stamps the
+   * moment of the tap rather than the moment the wifi returns.
+   */
+  async function queueTap(
+    member: RosterMember,
+    pinValue: string,
+    goingIn: boolean,
+  ) {
+    const saved = await enqueue({
+      kind: goingIn ? "shift-in" : "shift-out",
+      id: newEventId(),
+      at: studioNowIso(),
+      memberId: member.id,
+      memberName: member.full_name,
+      pin: pinValue,
+    });
+    // Pull the queue into state before the transition ends, or the optimistic
+    // flip is dropped a frame before its replacement arrives and the card
+    // visibly bounces.
+    await refreshQueue();
+
+    const first = member.full_name.split(" ")[0];
+    if (!saved) {
+      // No network *and* no storage to fall back on: say so plainly instead of
+      // showing a checkmark for something that is about to be lost.
+      setToast("Can't reach the studio and can't save here — use paper. ✍️");
+    } else {
+      setToast(
+        goingIn
+          ? `Saved on the tablet — welcome, ${first}! 👋`
+          : `Saved on the tablet — see you, ${first}! ✌️`,
+      );
+    }
+    setPinFor(null);
+    setPin("");
+    setPinError(null);
+  }
+
   function run(member: RosterMember, pinValue: string) {
+    // The card's own state is the intent: tapping a signed-in card means out.
+    const goingIn = member.openSince === null;
     setBusyId(member.id);
     startTransition(async () => {
       flipOptimistic(member.id);
       try {
+        // Skip a request that can't land — offline, this is instant instead of
+        // waiting out a timeout with a finger on the screen.
+        if (isOffline()) {
+          await queueTap(member, pinValue, goingIn);
+          return;
+        }
         // The server action calls revalidatePath("/kiosk"), which refreshes
         // the roster automatically — no router.refresh() needed.
         const res = await toggleKioskShift(member.id, pinValue);
@@ -69,7 +126,10 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
         setPin("");
         setPinError(null);
       } catch {
-        setToast("Something went wrong. Try again.");
+        // A server action only throws when the request never made it. Anything
+        // the server actually refused came back as a value above, so this is a
+        // dropped connection: keep the tap rather than lose it.
+        await queueTap(member, pinValue, goingIn);
       } finally {
         setBusyId(null);
       }

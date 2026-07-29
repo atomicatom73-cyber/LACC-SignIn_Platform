@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Logo } from "@/components/Brand";
+import { ServerClock } from "@/components/ServerClock";
 import { GuestForm, type HostOption } from "./GuestForm";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,8 @@ export default async function KioskGuestPage() {
 
   return (
     <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-md flex-col px-5 py-6">
+      {/* Measures tablet-vs-server clock drift for the offline queue. */}
+      <ServerClock />
       <Link href="/kiosk" className="inline-block text-sm text-muted">
         ← Back to quick sign in
       </Link>

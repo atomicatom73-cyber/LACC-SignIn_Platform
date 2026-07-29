@@ -51,9 +51,15 @@ export function InstallPrompt() {
     window.addEventListener("beforeinstallprompt", onBeforeInstall);
     window.addEventListener("appinstalled", onInstalled);
 
-    // Register the service worker (required for Android's install prompt).
+    // Register the service worker — required for Android's install prompt, and
+    // what keeps the kiosk loadable when the wifi drops (see public/sw.js).
+    // `updateViaCache: "none"` keeps the worker script itself out of the HTTP
+    // cache, so a fix to sw.js can always reach a tablet that's already running
+    // an old copy.
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      navigator.serviceWorker
+        .register("/sw.js", { updateViaCache: "none" })
+        .catch(() => {});
     }
 
     // Read the environment once, off the synchronous effect path — keeps the

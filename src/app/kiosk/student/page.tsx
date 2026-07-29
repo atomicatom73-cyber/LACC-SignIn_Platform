@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Logo } from "@/components/Brand";
+import { ServerClock } from "@/components/ServerClock";
 import { StudentForm, type OpenStudioSession } from "./StudentForm";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +38,8 @@ export default async function KioskStudentPage({
 
   return (
     <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-md flex-col px-5 py-6">
+      {/* Measures tablet-vs-server clock drift for the offline queue. */}
+      <ServerClock />
       <Link href={backHref} className="inline-block text-sm text-muted">
         {backLabel}
       </Link>
