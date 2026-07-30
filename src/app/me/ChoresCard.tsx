@@ -102,11 +102,10 @@ export function ChoresCard({
                     : "border-border bg-surface-2"
                 }`}
               >
-                <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <span
-                      className={`text-sm font-medium ${done ? "line-through opacity-70" : ""}`}
+                      className={`text-base font-semibold ${done ? "line-through opacity-70" : ""}`}
                     >
                       {c.choreName}
                     </span>
@@ -121,24 +120,25 @@ export function ChoresCard({
                       </span>
                     )}
                   </div>
-                  {c.choreDescription && (
-                    <div className="mt-0.5 text-xs text-muted">
-                      {c.choreDescription}
-                    </div>
-                  )}
+                  <button
+                    onClick={() => handleToggle(c.id)}
+                    disabled={pending && busyId === c.id}
+                    className={`shrink-0 rounded-xl px-3 py-2 text-sm font-semibold transition active:scale-[0.97] disabled:opacity-60 ${
+                      done
+                        ? "border border-border bg-surface text-muted"
+                        : "bg-success text-background"
+                    }`}
+                  >
+                    {pending && busyId === c.id ? "…" : done ? "Undo" : "Done ✓"}
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleToggle(c.id)}
-                  disabled={pending && busyId === c.id}
-                  className={`shrink-0 rounded-xl px-3 py-2 text-sm font-semibold transition active:scale-[0.97] disabled:opacity-60 ${
-                    done
-                      ? "border border-border bg-surface text-muted"
-                      : "bg-success text-background"
-                  }`}
-                >
-                  {pending && busyId === c.id ? "…" : done ? "Undo" : "Done ✓"}
-                </button>
-                </div>
+                {/* Full width, under the button — on a phone the instructions
+                    are unreadable squeezed into the column beside it. */}
+                {c.choreDescription && (
+                  <div className="mt-1.5 text-sm font-medium text-foreground">
+                    {c.choreDescription}
+                  </div>
+                )}
                 {c.choreScheduling && !done && (
                   <MyScheduleRow
                     assignmentId={c.id}

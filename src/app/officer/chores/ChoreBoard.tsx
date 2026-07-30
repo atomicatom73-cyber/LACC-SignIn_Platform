@@ -215,7 +215,9 @@ function ChoreCard({
           )}
         </div>
         {chore.description && (
-          <p className="mt-1 text-xs text-muted">{chore.description}</p>
+          <p className="mt-1 text-sm font-medium text-foreground">
+            {chore.description}
+          </p>
         )}
 
         {chore.paused ? (

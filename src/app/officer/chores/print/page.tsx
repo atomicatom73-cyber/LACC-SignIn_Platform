@@ -116,7 +116,7 @@ export default async function PrintAssignmentsPage({
                     </span>
                   </div>
                   {job.description && (
-                    <div className="mt-0.5 text-xs text-neutral-600">
+                    <div className="mt-1 text-sm font-medium text-neutral-800">
                       {job.description}
                     </div>
                   )}
