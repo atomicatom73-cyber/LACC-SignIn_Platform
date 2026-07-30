@@ -20,6 +20,7 @@ import type { ChoreInterval } from "@/lib/types";
 import { Wordmark } from "@/components/Brand";
 import { AnnouncementsBanner } from "@/components/AnnouncementsBanner";
 import { LogoutButton } from "@/components/LogoutButton";
+import { ServerClock } from "@/components/ServerClock";
 import { ClockCard } from "./ClockCard";
 import { ChoresCard, type MyChore } from "./ChoresCard";
 import { ProfileSetup } from "./ProfileSetup";
@@ -133,6 +134,8 @@ export default async function MePage() {
 
   return (
     <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-md flex-col px-5 py-6">
+      {/* Measures phone-vs-server clock drift so a queued tap is stamped right. */}
+      <ServerClock />
       <header className="flex items-center justify-between">
         <Wordmark />
         <form action={signOutAuth}>
@@ -149,7 +152,11 @@ export default async function MePage() {
       </div>
 
       <div className="mt-5">
-        <ClockCard openSince={open ? open.signed_in_at : null} />
+        <ClockCard
+          openSince={open ? open.signed_in_at : null}
+          memberId={member.id}
+          memberName={member.full_name}
+        />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 text-center text-sm font-semibold">

@@ -8,6 +8,7 @@ import {
   enqueue,
   isOffline,
   newEventId,
+  serverReachable,
   studioNowIso,
   type StoredEvent,
 } from "@/lib/offline-queue";
@@ -145,8 +146,8 @@ export function StudentForm({
 
 /**
  * Sign in, falling back to the tablet's queue when the request can't reach the
- * server. A server action only throws on a transport failure — anything the
- * server actually refused comes back as a value.
+ * server. A rejected action means either a dropped connection or a server that
+ * threw, so check which before claiming the sign-in was saved.
  */
 async function signInWithQueue(
   prev: StudentFormState,
@@ -156,6 +157,9 @@ async function signInWithQueue(
   try {
     return await studentSignIn(prev, formData);
   } catch {
+    if (await serverReachable()) {
+      return { error: "The studio's system had a problem — please try again." };
+    }
     return queueStudentIn(formData);
   }
 }
@@ -304,7 +308,11 @@ function OpenStudioList({ sessions }: { sessions: OpenStudioSession[] }) {
           setMessage(`See you next time, ${res.name.split(" ")[0]}! ✌️`);
         }
       } catch {
-        await queueSignOut(session);
+        if (await serverReachable()) {
+          setError("The studio's system had a problem — please try again.");
+        } else {
+          await queueSignOut(session);
+        }
       }
       setBusyId(null);
     });

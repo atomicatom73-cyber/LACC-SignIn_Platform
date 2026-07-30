@@ -29,6 +29,18 @@ const SKEW_KEY = "lacc.clockSkewMs";
 /** Queued events older than this are dropped unsynced rather than replayed. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Which surface took the tap. This decides how the sync proves the tap was
+ * legitimate, and what `shifts.source` it records:
+ *
+ *  - `kiosk` — the shared tablet has no logged-in user, so the member's PIN
+ *    travels with the event and is checked server-side at sync.
+ *  - `phone` — the member is logged in on their own device, so the sync checks
+ *    the caller's Supabase session instead. No PIN is stored at all, which
+ *    makes this the stronger of the two.
+ */
+export type QueueVia = "kiosk" | "phone";
+
 export type QueuedEvent =
   | {
       kind: "shift-in";
@@ -36,8 +48,9 @@ export type QueuedEvent =
       at: string;
       memberId: string;
       memberName: string;
-      /** Empty for members without a PIN. Verified server-side at sync. */
-      pin: string;
+      via: QueueVia;
+      /** Kiosk only; empty for members without a PIN. Never set for `phone`. */
+      pin?: string;
     }
   | {
       kind: "shift-out";
@@ -45,7 +58,8 @@ export type QueuedEvent =
       at: string;
       memberId: string;
       memberName: string;
-      pin: string;
+      via: QueueVia;
+      pin?: string;
     }
   | {
       kind: "guest-in";
@@ -101,6 +115,29 @@ export type StoredEvent = QueuedEvent & {
   /** Set when the server refused the event for good (e.g. wrong PIN). */
   rejected?: string;
 };
+
+/**
+ * The most recent queued in/out for one member, or null if they have none.
+ *
+ * The queue is ordered oldest first, so the last matching event is their current
+ * state according to this device — someone who tapped in and back out again
+ * while offline ends up out.
+ */
+export function latestShiftEvent(
+  queued: StoredEvent[],
+  memberId: string,
+): StoredEvent | null {
+  let latest: StoredEvent | null = null;
+  for (const event of queued) {
+    if (
+      (event.kind === "shift-in" || event.kind === "shift-out") &&
+      event.memberId === memberId
+    ) {
+      latest = event;
+    }
+  }
+  return latest;
+}
 
 /** Who the event is about, for banners and toasts. */
 export function eventSubject(event: QueuedEvent): string {
@@ -404,14 +441,35 @@ export function subscribeToQueue(fn: () => void): () => void {
 // ---------------------------------------------------------------------------
 
 /**
- * True when a server action failed because the request never made it, rather
- * than because the server said no.
- *
- * A server action that reaches the server returns its error as a value; only a
- * transport failure throws. `navigator.onLine` is unreliable on its own (a
- * captive portal reports online), so the throw is the real signal and the flag
- * is only used to skip a doomed attempt.
+ * Cheap "is the network definitely down" check, used to skip an attempt that
+ * can't land. Not trusted on its own: a captive portal reports online, and a
+ * phone with one bar reports online while nothing gets through.
  */
 export function isOffline(): boolean {
   return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+/**
+ * Whether the studio's server is actually answering right now.
+ *
+ * This is how a dropped connection is told apart from a server that answered
+ * with a failure — a distinction that matters because the two deserve opposite
+ * responses. A rejected server action does NOT mean "offline": Next rejects the
+ * promise both when the request never left the building and when the server
+ * threw, and the two are indistinguishable from the error alone in production
+ * (the real message is replaced by a digest).
+ *
+ * Guessing wrong in the reassuring direction is the bad one. Telling someone
+ * "saved on the tablet" when the server is up and rejecting their sign-in means
+ * they walk away believing they're clocked in, and the queue rediscovers the
+ * same failure on every retry until it gives up hours later.
+ */
+export async function serverReachable(): Promise<boolean> {
+  if (isOffline()) return false;
+  try {
+    const response = await fetch("/api/now", { cache: "no-store" });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

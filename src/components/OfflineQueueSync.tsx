@@ -25,6 +25,11 @@ export function OfflineQueueSync() {
   const pathname = usePathname();
   const [dismissed, setDismissed] = useState(false);
 
+  // "this tablet" is right at the kiosk and wrong on someone's phone. Trust the
+  // queued taps first, since they record which surface took them, and fall back
+  // to the route when there's nothing queued yet.
+  const device = whichDevice(pending, pathname);
+
   // Sync on load, when the network comes back, and when the tablet is woken up
   // — an iPad that has been asleep fires `visibilitychange`, not `online`.
   useEffect(() => {
@@ -96,21 +101,21 @@ export function OfflineQueueSync() {
   }
 
   if (!online) {
-    const onKiosk = pathname.startsWith("/kiosk");
-    // Away from the kiosk an offline notice is just noise — nothing there is
-    // queueing anything.
-    if (!waiting && !onKiosk) return null;
+    // Away from a sign-in screen an offline notice is just noise — nothing there
+    // is queueing anything.
+    const onSignInScreen = pathname.startsWith("/kiosk") || pathname === "/me";
+    if (!waiting && !onSignInScreen) return null;
     return (
       <Banner tone="accent">
         <span className="text-sm font-semibold">
           {waiting
             ? `Offline · ${pending.length} sign-in${
                 pending.length === 1 ? "" : "s"
-              } saved on this tablet`
+              } saved on this ${device}`
             : "Offline · sign-ins will be saved here"}
         </span>
         <span className="text-xs opacity-90">
-          They&apos;ll upload on their own once the wifi is back.
+          They&apos;ll upload on their own once you&apos;re back online.
         </span>
       </Banner>
     );
@@ -127,7 +132,7 @@ export function OfflineQueueSync() {
           {stalled
             ? `Can't reach the studio · ${pending.length} sign-in${
                 pending.length === 1 ? "" : "s"
-              } saved on this tablet`
+              } saved on this ${device}`
             : `Syncing ${pending.length} saved sign-in${
                 pending.length === 1 ? "" : "s"
               }…`}
@@ -142,6 +147,16 @@ export function OfflineQueueSync() {
   }
 
   return null;
+}
+
+/** The word for the thing holding the queue, so the banner reads naturally. */
+function whichDevice(pending: StoredEvent[], pathname: string): string {
+  for (const event of pending) {
+    if (event.kind === "shift-in" || event.kind === "shift-out") {
+      return event.via === "phone" ? "phone" : "tablet";
+    }
+  }
+  return pathname === "/me" ? "phone" : "tablet";
 }
 
 function Banner({

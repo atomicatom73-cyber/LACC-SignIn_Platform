@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { requestSigninLogExport } from "@/lib/signin-log-sheet";
 import {
   SYNC_BATCH_LIMIT,
@@ -11,7 +12,8 @@ import {
 } from "@/lib/offline-queue";
 
 /**
- * Replay sign-ins that happened on the kiosk while it was offline.
+ * Replay sign-ins taken while the network was down — from the shared kiosk
+ * tablet and from members' own phones (`/me`), which queue the same way.
  *
  * Every event carries the id of the row it wants to create and the moment of
  * the tap, so this is safe to call with events that already landed: a repeated
@@ -77,6 +79,7 @@ export async function syncOfflineEvents(
   if (applied > 0) {
     revalidatePath("/kiosk");
     revalidatePath("/kiosk/student");
+    revalidatePath("/me");
     revalidatePath("/officer/logs");
     after(requestSigninLogExport);
   }
@@ -114,7 +117,7 @@ async function applyShiftIn(
   event: Extract<QueuedEvent, { kind: "shift-in" }>,
   at: string,
 ): Promise<Omit<SyncOutcome, "id">> {
-  const check = await verifyMember(supabase, event.memberId, event.pin);
+  const check = await verifyMember(supabase, event);
   if ("error" in check) return { status: "rejected", reason: check.error };
 
   // Already replayed — the row is here with the id this event carries.
@@ -129,9 +132,9 @@ async function applyShiftIn(
     id: event.id,
     member_id: event.memberId,
     signed_in_at: at,
-    // Keep the live value: the officer log reads anything other than "kiosk"
-    // as a phone sign-in.
-    source: "kiosk",
+    // Must match what the live path would have written: the officer log renders
+    // anything other than "kiosk" as a phone sign-in.
+    source: event.via === "phone" ? "phone" : "kiosk",
   });
 
   if (error) {
@@ -148,7 +151,7 @@ async function applyShiftOut(
   event: Extract<QueuedEvent, { kind: "shift-out" }>,
   at: string,
 ): Promise<Omit<SyncOutcome, "id">> {
-  const check = await verifyMember(supabase, event.memberId, event.pin);
+  const check = await verifyMember(supabase, event);
   if ("error" in check) return { status: "rejected", reason: check.error };
 
   const { data: openShift } = await supabase
@@ -221,25 +224,49 @@ async function closeGuestsFor(
     .eq("auto_closed", true);
 }
 
+/**
+ * Prove a queued shift event was really that member's tap.
+ *
+ * Two routes in, because the two surfaces authenticate differently — see
+ * `QueueVia`. A phone tap is checked against the caller's own logged-in session,
+ * so a `phone` event can never be replayed by anyone else; a kiosk tap falls
+ * back to the PIN, which is all a shared tablet has.
+ */
 async function verifyMember(
   supabase: Supabase,
-  memberId: string,
-  pin: string,
+  event: Extract<QueuedEvent, { kind: "shift-in" | "shift-out" }>,
 ): Promise<{ name: string } | { error: string }> {
   const { data: member, error } = await supabase
     .from("members")
     .select("id, full_name, pin, user_id")
-    .eq("id", memberId)
+    .eq("id", event.memberId)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!member) return { error: "That member no longer exists." };
   if (!member.user_id) {
     return { error: "Quick sign-in needs an account — this one has none." };
   }
+
+  if (event.via === "phone") {
+    // The member was logged in on their own device when they tapped. Anyone can
+    // POST to this action, so the session — not the payload — decides who it is.
+    const session = await createClient();
+    const {
+      data: { user },
+    } = await session.auth.getUser();
+    if (!user) {
+      return { error: "Your login expired before this could be saved." };
+    }
+    if (user.id !== member.user_id) {
+      return { error: "This sign-in belongs to a different account." };
+    }
+    return { name: member.full_name };
+  }
+
   // Same rule as the live kiosk: only members who set a PIN have to match it.
   // A PIN added while the tablet was offline will reject the queued tap, which
   // is the safe direction — the officer log shows the gap.
-  if (member.pin && member.pin !== pin.trim()) {
+  if (member.pin && member.pin !== (event.pin ?? "").trim()) {
     return { error: "Wrong PIN — this sign-in wasn't recorded." };
   }
   return { name: member.full_name };
@@ -391,7 +418,10 @@ function isQueuedEvent(value: unknown): value is QueuedEvent {
     case "shift-in":
     case "shift-out":
       return (
-        typeof event.memberId === "string" && typeof event.pin === "string"
+        typeof event.memberId === "string" &&
+        (event.via === "kiosk" || event.via === "phone") &&
+        // Kiosk taps carry a PIN (possibly empty); phone taps must not.
+        (event.pin === undefined || typeof event.pin === "string")
       );
     case "guest-in":
       return (

@@ -9,6 +9,7 @@ import {
   enqueue,
   isOffline,
   newEventId,
+  serverReachable,
   studioNowIso,
 } from "@/lib/offline-queue";
 import { toggleKioskShift } from "./actions";
@@ -67,6 +68,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
       at: studioNowIso(),
       memberId: member.id,
       memberName: member.full_name,
+      via: "kiosk",
       pin: pinValue,
     });
     // Pull the queue into state before the transition ends, or the optimistic
@@ -91,6 +93,18 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
     setPinError(null);
   }
 
+  /** Show a failure where the person is actually looking: in the open PIN
+   *  dialog if there is one, otherwise as a toast. */
+  function showFailure(message: string) {
+    if (pinFor) {
+      setPinError(message);
+      setPin("");
+      pinInputRef.current?.focus();
+    } else {
+      setToast(message);
+    }
+  }
+
   function run(member: RosterMember, pinValue: string) {
     // The card's own state is the intent: tapping a signed-in card means out.
     const goingIn = member.openSince === null;
@@ -108,14 +122,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
         // the roster automatically — no router.refresh() needed.
         const res = await toggleKioskShift(member.id, pinValue);
         if ("error" in res) {
-          if (pinFor) {
-            setPinError(res.error);
-            setPin("");
-            pinInputRef.current?.focus();
-          } else {
-            // No dialog open (PIN-less tap) — surface the error as a toast.
-            setToast(res.error);
-          }
+          showFailure(res.error);
           return;
         }
         const first = res.name.split(" ")[0];
@@ -126,10 +133,16 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
         setPin("");
         setPinError(null);
       } catch {
-        // A server action only throws when the request never made it. Anything
-        // the server actually refused came back as a value above, so this is a
-        // dropped connection: keep the tap rather than lose it.
-        await queueTap(member, pinValue, goingIn);
+        // A rejected action means either the request never left the building or
+        // the server threw — indistinguishable from the error in production, so
+        // ask whether the server is answering before deciding what to tell them.
+        if (await serverReachable()) {
+          // It's up and it refused. Queueing would show a checkmark for a tap
+          // that will keep failing, so surface it now instead.
+          showFailure("The studio's system had a problem — please try again.");
+        } else {
+          await queueTap(member, pinValue, goingIn);
+        }
       } finally {
         setBusyId(null);
       }

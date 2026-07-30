@@ -7,6 +7,7 @@ import {
   enqueue,
   isOffline,
   newEventId,
+  serverReachable,
   studioNowIso,
   type StoredEvent,
 } from "@/lib/offline-queue";
@@ -98,8 +99,8 @@ export function GuestForm({ hosts }: { hosts: HostOption[] }) {
 
 /**
  * Sign the guest in, falling back to the tablet's queue when the request can't
- * reach the server. A server action only throws on a transport failure —
- * anything the server actually refused comes back as a value.
+ * reach the server. A rejected action means either a dropped connection or a
+ * server that threw, so check which before claiming the guest was saved.
  */
 async function guestSignIn(
   prev: SignInFormState,
@@ -109,6 +110,9 @@ async function guestSignIn(
   try {
     return await kioskGuestSignIn(prev, formData);
   } catch {
+    if (await serverReachable()) {
+      return { error: "The studio's system had a problem — please try again." };
+    }
     return queueGuest(formData);
   }
 }

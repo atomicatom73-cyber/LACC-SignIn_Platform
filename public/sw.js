@@ -13,23 +13,42 @@
  *
  *   - Documents are **network-first**. Online, you always get the current
  *     build; the cache is only ever a fallback for a failed fetch.
- *   - Only the three public kiosk routes are cached. Signed-in pages (/me,
- *     /officer) are never stored — a cached member page replayed to the next
- *     person on a shared tablet would leak their data.
  *   - `/_next/static/*` is cache-first because those filenames are
  *     content-hashed, so a hit is always the right bytes for that build.
  *   - POSTs are never touched. Server actions must fail fast when offline so
  *     the client knows to queue instead of hanging.
  *
+ * The member dashboard (`/me`) is cached too, so a member whose phone has no
+ * signal can still clock in — but it holds one person's data, and this same
+ * worker runs on the shared studio tablet. So it gets stricter treatment than
+ * the public kiosk screens: its own cache, dropped on logout by the page itself
+ * (see lib/offline-cache.ts — messaging the worker races the navigation and
+ * loses), and an offline copy is only served while it's still fresh, since an
+ * offline hit bypasses the auth check in proxy.ts and a stale one must not linger.
+ * `/me/door-codes`, `/me/inbox`, `/me/account` and everything under `/officer`
+ * are never stored at all.
+ *
  * Bump CACHE_VERSION to evict everything on the next deploy.
  */
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const SHELL_CACHE = `lacc-shell-${CACHE_VERSION}`;
 const STATIC_CACHE = `lacc-static-${CACHE_VERSION}`;
+const PRIVATE_CACHE = `lacc-private-${CACHE_VERSION}`;
 
-/** The only documents worth having offline — all public, all sign-in surfaces. */
+/** Public sign-in surfaces — safe to cache and to precache on install. */
 const OFFLINE_ROUTES = ["/kiosk", "/kiosk/guest", "/kiosk/student"];
+
+/**
+ * Signed-in pages worth having offline. Cached only once actually visited (never
+ * precached — we don't know who's logged in at install time), kept apart from
+ * the public cache so a logout can drop them, and only served offline while
+ * still fresh.
+ */
+const PRIVATE_ROUTES = ["/me"];
+
+/** How stale a signed-in page may be and still be served offline. */
+const PRIVATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 /**
  * Files from /public that the offline screens need. Unlike /_next/static these
@@ -62,7 +81,12 @@ self.addEventListener("activate", (event) => {
       .then((names) =>
         Promise.all(
           names
-            .filter((name) => name !== SHELL_CACHE && name !== STATIC_CACHE)
+            .filter(
+              (name) =>
+                name !== SHELL_CACHE &&
+                name !== STATIC_CACHE &&
+                name !== PRIVATE_CACHE,
+            )
             .map((name) => caches.delete(name)),
         ),
       )
@@ -102,22 +126,29 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (request.mode === "navigate" && isOfflineRoute(url.pathname)) {
-    event.respondWith(documentNetworkFirst(request));
-    return;
+  if (request.mode === "navigate") {
+    const path = normalizePath(url.pathname);
+    if (OFFLINE_ROUTES.includes(path)) {
+      event.respondWith(documentNetworkFirst(request, SHELL_CACHE, 0));
+      return;
+    }
+    if (PRIVATE_ROUTES.includes(path)) {
+      event.respondWith(
+        documentNetworkFirst(request, PRIVATE_CACHE, PRIVATE_MAX_AGE_MS),
+      );
+      return;
+    }
   }
 
-  // Everything else — RSC payloads, images, API routes, signed-in pages — is
-  // left alone. When an RSC fetch fails offline, Next falls back to a full
-  // browser navigation, which the branch above then serves from cache.
+  // Everything else — RSC payloads, images, API routes, /officer, the rest of
+  // /me — is left alone. When an RSC fetch fails offline, Next falls back to a
+  // full browser navigation, which the branches above then serve from cache.
 });
 
-function isOfflineRoute(pathname) {
-  const clean =
-    pathname.length > 1 && pathname.endsWith("/")
-      ? pathname.slice(0, -1)
-      : pathname;
-  return OFFLINE_ROUTES.includes(clean);
+function normalizePath(pathname) {
+  return pathname.length > 1 && pathname.endsWith("/")
+    ? pathname.slice(0, -1)
+    : pathname;
 }
 
 /** Content-hashed assets: serve from cache, fall back to network and store. */
@@ -166,11 +197,15 @@ async function staleWhileRevalidate(request) {
 
 /**
  * Documents: always try the network, but keep a copy so a dropped connection
- * still opens the kiosk. The cached roster will be stale — OfflineQueueSync
+ * still opens the page. The cached content will be stale — OfflineQueueSync
  * tells the user so, and queued taps are reconciled against the server at sync.
+ *
+ * `maxAgeMs` of 0 means "no age limit" (the public kiosk screens). A positive
+ * value refuses to serve a copy older than that, which is what keeps a stale
+ * signed-in page from outliving the session it was fetched under.
  */
-async function documentNetworkFirst(request) {
-  const cache = await caches.open(SHELL_CACHE);
+async function documentNetworkFirst(request, cacheName, maxAgeMs) {
+  const cache = await caches.open(cacheName);
   try {
     const response = await fetch(request);
     if (isCacheable(response)) {
@@ -184,10 +219,23 @@ async function documentNetworkFirst(request) {
       // A cold launch lands on the manifest's start_url, and a queued-up
       // tablet may only have /kiosk stored — match on pathname alone so query
       // strings don't cause a miss.
-      (await cache.match(new URL(request.url).pathname));
-    if (hit) return hit;
+      (await cache.match(normalizePath(new URL(request.url).pathname)));
+    if (hit && isFreshEnough(hit, maxAgeMs)) return hit;
     return offlineFallback();
   }
+}
+
+/**
+ * Age-check a cached response using the `Date` header the server sent with it.
+ * No header means we can't tell how old it is, so an age-limited cache treats it
+ * as too old rather than guessing in the permissive direction.
+ */
+function isFreshEnough(response, maxAgeMs) {
+  if (!maxAgeMs) return true;
+  const dated = response.headers.get("date");
+  if (!dated) return false;
+  const age = Date.now() - Date.parse(dated);
+  return Number.isFinite(age) && age < maxAgeMs;
 }
 
 function isCacheable(response) {
