@@ -292,6 +292,10 @@ export type ReshufflePreview = {
    *  credit) — the UI diffs this against the edited draft for the coverage
    *  chart and the "no job" list. */
   eligibleMembers: { id: string; name: string }[];
+  /** Who the "+" picker offers: every active member except officers. Absent
+   *  members and credit holders are in the list but tagged, so adding one is
+   *  a deliberate override rather than an accident. */
+  pickerMembers: { id: string; name: string; note: "absent" | "credit" | null }[];
   warnings: string[];
   existingCount: number;
 };
@@ -351,15 +355,18 @@ export async function previewReshuffle(
     return { error: "No active members to assign jobs to." };
   }
 
+  const absentMemberIds = (absentRes.data ?? []).map((a) => a.member_id);
+  const creditAvailableMemberIds = [
+    ...new Set((creditsRes.data ?? []).map((c) => c.member_id)),
+  ];
+
   const draft = generateMonthlyDraft({
     targetMonth,
     chores,
     members,
     prevAssignments: prevRes.data ?? [],
-    absentMemberIds: (absentRes.data ?? []).map((a) => a.member_id),
-    creditAvailableMemberIds: [
-      ...new Set((creditsRes.data ?? []).map((c) => c.member_id)),
-    ],
+    absentMemberIds,
+    creditAvailableMemberIds,
     officerMemberIds: members
       .filter((m) => m.officer_status)
       .map((m) => m.id),
@@ -372,6 +379,8 @@ export async function previewReshuffle(
     ...draft.exemptAbsent,
     ...draft.creditsToConsume,
   ]);
+  const absent = new Set(absentMemberIds);
+  const credited = new Set(creditAvailableMemberIds);
 
   return {
     preview: {
@@ -396,6 +405,17 @@ export async function previewReshuffle(
       eligibleMembers: members
         .filter((m) => !exempt.has(m.id))
         .map((m) => ({ id: m.id, name: m.full_name })),
+      pickerMembers: members
+        .filter((m) => !m.officer_status)
+        .map((m) => ({
+          id: m.id,
+          name: m.full_name,
+          note: absent.has(m.id)
+            ? ("absent" as const)
+            : credited.has(m.id)
+              ? ("credit" as const)
+              : null,
+        })),
       warnings: draft.warnings,
       existingCount: existingRes.count ?? 0,
     },

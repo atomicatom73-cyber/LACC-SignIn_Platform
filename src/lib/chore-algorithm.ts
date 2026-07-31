@@ -11,11 +11,9 @@
  * back in the rotation next month; officers stay out until the president
  * unticks their officer status.
  *
- * Load is balanced per half-month window. A `month` chore occupies both
- * halves; `first_half` / `second_half` chores occupy only theirs, so one
- * member can hold a first-half AND a second-half job without it counting as
- * a double-up. Nobody gets a second job in the same window until everyone
- * available has work in that window.
+ * Nobody gets more than one job a month, ever. When there aren't enough
+ * people to go round, the leftover slots simply stay unassigned instead of
+ * doubling anyone up — the officer fills them by hand from the draft.
  */
 
 export type ChoreWindowInterval = "month" | "first_half" | "second_half";
@@ -77,13 +75,6 @@ function seededShuffle<T>(items: readonly T[], rand: () => number): T[] {
 
 const pairKey = (choreId: string, memberId: string) => `${choreId}:${memberId}`;
 
-/** The half-month windows an interval occupies. */
-function windowsOf(interval: ChoreWindowInterval): ("first" | "second")[] {
-  if (interval === "first_half") return ["first"];
-  if (interval === "second_half") return ["second"];
-  return ["first", "second"];
-}
-
 export function generateMonthlyDraft(input: DraftInput): Draft {
   const rand = mulberry32(hashString(input.targetMonth));
   const warnings: string[] = [];
@@ -131,8 +122,8 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
     rand,
   ).sort((a, b) => (prevCount.get(a.id) ?? 0) - (prevCount.get(b.id) ?? 0));
 
-  // Month-long chores are the most constrained (they occupy both windows),
-  // so they draw first; half-month chores fill the gaps around them.
+  // Month-long chores are the biggest commitment, so they draw first; when
+  // the studio is short-handed the empty slots land on half-month jobs.
   const shuffled = seededShuffle(
     input.chores
       .filter((c) => c.slots > 0)
@@ -144,76 +135,44 @@ export function generateMonthlyDraft(input: DraftInput): Draft {
     ...shuffled.filter((c) => c.interval !== "month"),
   ];
 
-  // Per-member load in THIS draft: total jobs and which windows are taken.
-  const assignedCount = new Map<string, number>();
-  const busyWindows = new Map<string, Set<"first" | "second">>();
+  // Who already holds a job in THIS draft — one each is the hard cap.
+  const taken = new Set<string>();
   const proposalByChore = new Map<string, string[]>();
   for (const chore of chores) proposalByChore.set(chore.id, []);
 
-  type Mode = "fresh" | "window-free" | "any";
-
   /**
-   * Walk the pool for the next eligible candidate.
-   *  - fresh:       nobody with a job yet — spread the load first.
-   *  - window-free: may already work the OTHER half of the month, but the
-   *                 chore's own window(s) are open. Not a double-up.
-   *  - any:         last resort — a second job in the same window.
+   * The next member with no job yet who didn't hold this chore last month.
+   * Null means the slot can't be filled — either everyone's busy or the
+   * people still free all had this same job last month.
    */
-  const takeCandidate = (
-    chore: { id: string; interval: ChoreWindowInterval },
-    current: string[],
-    mode: Mode,
-  ): { id: string; full_name: string } | null => {
-    const wanted = windowsOf(chore.interval);
-    for (const candidate of pool) {
-      if (prevPairs.has(pairKey(chore.id, candidate.id))) continue;
-      if (current.includes(candidate.id)) continue;
-      if (mode === "fresh" && (assignedCount.get(candidate.id) ?? 0) > 0) {
-        continue;
-      }
-      if (mode !== "any") {
-        const busy = busyWindows.get(candidate.id);
-        if (busy && wanted.some((w) => busy.has(w))) continue;
-      }
-      return candidate;
-    }
-    return null;
-  };
+  const takeCandidate = (choreId: string) =>
+    pool.find(
+      (m) => !taken.has(m.id) && !prevPairs.has(pairKey(choreId, m.id)),
+    ) ?? null;
 
   for (const chore of chores) {
     const memberIds = proposalByChore.get(chore.id)!;
     for (let slot = 1; slot <= chore.slots; slot++) {
-      let pick = takeCandidate(chore, memberIds, "fresh");
+      const pick = takeCandidate(chore.id);
       if (!pick) {
-        // Everyone free already has a job — cross-window seconds are fine.
-        pick = takeCandidate(chore, memberIds, "window-free");
-      }
-      if (!pick) {
-        pick = takeCandidate(chore, memberIds, "any");
-        if (pick) {
+        // Nothing about the next slot would change the answer, so the rest of
+        // this job stays unassigned. Only flag the surprising reason: people
+        // are still free, they just all had this job last month. Running out
+        // of members is obvious from the empty slots themselves.
+        if (pool.some((m) => !taken.has(m.id))) {
+          const missing = chore.slots - memberIds.length;
           warnings.push(
-            `${pick.full_name} got a second job in the same half of the month (${chore.name}) — everyone available already has one there.`,
+            `${chore.name} has ${missing} slot${missing === 1 ? "" : "s"} left unassigned — everyone still free had it last month. Add someone by hand if you want it covered.`,
           );
         }
+        break;
       }
-
-      if (pick) {
-        memberIds.push(pick.id);
-        assignedCount.set(pick.id, (assignedCount.get(pick.id) ?? 0) + 1);
-        const busy = busyWindows.get(pick.id) ?? new Set();
-        for (const w of windowsOf(chore.interval)) busy.add(w);
-        busyWindows.set(pick.id, busy);
-      } else {
-        warnings.push(
-          `Couldn't fill slot ${slot} of ${chore.name} — everyone left had it last month. Assign manually.`,
-        );
-      }
+      memberIds.push(pick.id);
+      taken.add(pick.id);
     }
   }
 
-  const unassigned = pool
-    .filter((m) => (assignedCount.get(m.id) ?? 0) === 0)
-    .map((m) => m.id);
+  const unassigned = pool.filter((m) => !taken.has(m.id)).map((m) => m.id);
 
   // Return proposals in the caller's chore order for stable display.
   const proposals = input.chores

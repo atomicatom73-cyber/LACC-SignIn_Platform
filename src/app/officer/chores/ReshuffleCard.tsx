@@ -46,7 +46,8 @@ export function ReshuffleCard({
   const [preview, setPreview] = useState<ReshufflePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [openChoreId, setOpenChoreId] = useState<string | null>(null);
+  /** Which job has its "add someone" member list open, if any. */
+  const [pickerChoreId, setPickerChoreId] = useState<string | null>(null);
   // Live drag data lives in refs — pointer events can outrun React renders,
   // so handlers must not depend on state closures. State mirrors it for the
   // ghost chip / drop highlight only.
@@ -66,9 +67,22 @@ export function ReshuffleCard({
         setPreview(null);
       } else {
         setPreview(result.preview);
-        setOpenChoreId(null);
+        setPickerChoreId(null);
       }
     });
+
+  /** Hand-add someone to a job from the picker. */
+  const addMember = (choreId: string, member: { id: string; name: string }) => {
+    if (!preview) return;
+    setPreview({
+      ...preview,
+      proposals: preview.proposals.map((p) =>
+        p.choreId === choreId && !p.members.some((m) => m.id === member.id)
+          ? { ...p, members: [...p.members, member] }
+          : p,
+      ),
+    });
+  };
 
   const dropMember = (choreId: string, memberId: string) => {
     if (!preview) return;
@@ -166,8 +180,20 @@ export function ReshuffleCard({
   };
 
   // Coverage: the live draft while one is open, otherwise what's published.
+  // Everyone in the draw counts, plus anyone hand-added who wasn't (an absent
+  // member or credit holder the officer put on a job anyway).
+  const draftRoster = new Map(
+    preview
+      ? [
+          ...preview.eligibleMembers.map((m) => [m.id, m] as const),
+          ...preview.proposals.flatMap((p) =>
+            p.members.map((m) => [m.id, m] as const),
+          ),
+        ]
+      : [],
+  );
   const coverage: Coverage[] = preview
-    ? preview.eligibleMembers.map((m) => ({
+    ? [...draftRoster.values()].map((m) => ({
         id: m.id,
         name: m.name,
         jobs: preview.proposals.filter((p) =>
@@ -175,6 +201,12 @@ export function ReshuffleCard({
         ).length,
       }))
     : published;
+
+  // Jobs the draft couldn't staff. Nobody gets two jobs, so a short-handed
+  // month leaves slots open instead of stacking them on whoever's left.
+  const unfilled = (preview?.proposals ?? [])
+    .map((p) => ({ choreName: p.choreName, open: p.slots - p.members.length }))
+    .filter((u) => u.open > 0);
 
   const publish = () =>
     startTransition(async () => {
@@ -229,8 +261,9 @@ export function ReshuffleCard({
       </label>
       <p className="mt-2 text-xs text-muted">
         Officers, absent members, and credit holders sit the month out (credits
-        are spent on publish), repeats are avoided, and the load is spread by
-        half-month. Nothing is saved until you publish — so future months can be
+        are spent on publish), repeats are avoided, and nobody gets more than
+        one job — if there aren&apos;t enough members, the leftover slots stay
+        unassigned. Nothing is saved until you publish, so future months can be
         drafted, reviewed, and published well ahead of time.
       </p>
 
@@ -252,14 +285,25 @@ export function ReshuffleCard({
             </p>
           )}
 
+          {unfilled.length > 0 && (
+            <p className="mb-3 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-sm">
+              <span className="font-medium">Unassigned:</span>{" "}
+              {unfilled
+                .map((u) => `${u.choreName} (${u.open})`)
+                .join(", ")}{" "}
+              <span className="text-muted">
+                — not enough members to go round without giving anyone two jobs.
+                Add someone with ＋, or publish and leave the slots open.
+              </span>
+            </p>
+          )}
+
           <p className="mb-2 text-xs text-muted">
-            Tap a job to see who&apos;s on it. Drag a name onto another job to
-            move it — closed jobs accept drops too.
+            Drag a name onto another job to move it, or tap ＋ to add someone.
           </p>
           <ul className="flex select-none flex-col gap-1.5">
             {preview.proposals.map((p) => {
-              const open = openChoreId === p.choreId;
-              const short = p.members.length < p.slots;
+              const openSlots = Math.max(0, p.slots - p.members.length);
               const dropTarget =
                 drag?.started &&
                 overChoreId === p.choreId &&
@@ -274,68 +318,88 @@ export function ReshuffleCard({
                       : "border-border bg-surface-2"
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => setOpenChoreId(open ? null : p.choreId)}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
-                  >
-                    <span className="w-3 shrink-0 text-xs text-muted">
-                      {open ? "▾" : "▸"}
-                    </span>
+                  <div className="flex items-center gap-2 px-3 pt-2.5">
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">
                       {p.choreName}
                     </span>
                     <span
                       className={`shrink-0 text-xs font-semibold tabular-nums ${
-                        short ? "text-danger" : "text-success"
+                        openSlots > 0 ? "text-danger" : "text-success"
                       }`}
                     >
                       {p.members.length}/{p.slots}
-                      {short ? " ⚠" : " ✓"}
+                      {openSlots > 0 ? " ⚠" : " ✓"}
                     </span>
-                  </button>
-                  {open && (
-                    <div className="px-3 pb-3">
-                      {p.members.length === 0 ? (
-                        <p className="text-xs text-muted">
-                          Nobody — drag a name here, or assign it by hand below.
-                        </p>
-                      ) : (
-                        <div className="flex flex-wrap gap-1.5">
-                          {p.members.map((m) => (
-                            <span
-                              key={m.id}
-                              onPointerDown={(e) => {
-                                if (pending) return;
-                                handleDragStart(e, m, p.choreId);
-                              }}
-                              onPointerMove={handleDragMove}
-                              onPointerUp={() => handleDragEnd(true)}
-                              onPointerCancel={() => handleDragEnd(false)}
-                              className={`inline-flex cursor-grab touch-none items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs ${
-                                drag?.started &&
-                                drag.memberId === m.id &&
-                                drag.fromChoreId === p.choreId
-                                  ? "opacity-40"
-                                  : ""
-                              }`}
-                            >
-                              {m.name}
-                              <button
-                                onClick={() => dropMember(p.choreId, m.id)}
-                                onPointerDown={(e) => e.stopPropagation()}
-                                disabled={pending}
-                                title="Remove from draft"
-                                aria-label={`Remove ${m.name} from ${p.choreName}`}
-                                className="text-muted transition active:scale-[0.9] disabled:opacity-60"
-                              >
-                                ✕
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2.5 pt-1.5">
+                    {p.members.map((m) => (
+                      <span
+                        key={m.id}
+                        onPointerDown={(e) => {
+                          if (pending) return;
+                          handleDragStart(e, m, p.choreId);
+                        }}
+                        onPointerMove={handleDragMove}
+                        onPointerUp={() => handleDragEnd(true)}
+                        onPointerCancel={() => handleDragEnd(false)}
+                        className={`inline-flex cursor-grab touch-none items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs ${
+                          drag?.started &&
+                          drag.memberId === m.id &&
+                          drag.fromChoreId === p.choreId
+                            ? "opacity-40"
+                            : ""
+                        }`}
+                      >
+                        {m.name}
+                        <button
+                          onClick={() => dropMember(p.choreId, m.id)}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          disabled={pending}
+                          title="Remove from draft"
+                          aria-label={`Remove ${m.name} from ${p.choreName}`}
+                          className="text-muted transition active:scale-[0.9] disabled:opacity-60"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                    {openSlots > 0 && (
+                      <span className="inline-flex items-center rounded-full border border-dashed border-danger/50 px-2.5 py-1 text-xs text-danger">
+                        {openSlots} unassigned
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPickerChoreId(
+                          pickerChoreId === p.choreId ? null : p.choreId,
+                        )
+                      }
+                      disabled={pending}
+                      aria-label={`Add someone to ${p.choreName}`}
+                      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold transition active:scale-[0.95] disabled:opacity-60 ${
+                        pickerChoreId === p.choreId
+                          ? "border-accent bg-accent/10 text-accent"
+                          : "border-border bg-surface text-muted"
+                      }`}
+                    >
+                      {pickerChoreId === p.choreId ? "✕" : "＋"}
+                    </button>
+                  </div>
+                  {pickerChoreId === p.choreId && (
+                    <MemberPicker
+                      members={preview.pickerMembers}
+                      onThisJob={new Set(p.members.map((m) => m.id))}
+                      busyElsewhere={
+                        new Set(
+                          preview.proposals
+                            .filter((o) => o.choreId !== p.choreId)
+                            .flatMap((o) => o.members.map((m) => m.id)),
+                        )
+                      }
+                      onPick={(m) => addMember(p.choreId, m)}
+                      onClose={() => setPickerChoreId(null)}
+                    />
                   )}
                 </li>
               );
@@ -404,6 +468,94 @@ export function ReshuffleCard({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The "＋" list: every active member except officers, searchable, tap to add.
+ * Anyone already holding a job in this draft sorts to the bottom and says so —
+ * the algorithm never hands out two, so adding them is a deliberate override.
+ * Absent members and credit holders are listed but tagged for the same reason.
+ */
+function MemberPicker({
+  members,
+  onThisJob,
+  busyElsewhere,
+  onPick,
+  onClose,
+}: {
+  members: { id: string; name: string; note: "absent" | "credit" | null }[];
+  /** Already on this job — hidden from the list. */
+  onThisJob: Set<string>;
+  /** Holding some other job in this draft — listed last, flagged. */
+  busyElsewhere: Set<string>;
+  onPick: (member: { id: string; name: string }) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const matches = members
+    .filter(
+      (m) => !onThisJob.has(m.id) && m.name.toLowerCase().includes(needle),
+    )
+    .sort(
+      (a, b) =>
+        Number(busyElsewhere.has(a.id)) - Number(busyElsewhere.has(b.id)),
+    );
+
+  return (
+    <div className="select-text border-t border-border px-3 py-2.5">
+      <input
+        autoFocus
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search members…"
+        aria-label="Search members"
+        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
+      />
+
+      {matches.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">
+          {needle ? `Nobody matches “${query.trim()}”.` : "Nobody left to add."}
+        </p>
+      ) : (
+        <ul className="mt-2 flex max-h-52 flex-col gap-1 overflow-y-auto">
+          {matches.map((m) => (
+            <li key={m.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  onPick({ id: m.id, name: m.name });
+                  setQuery("");
+                }}
+                className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-surface px-2.5 py-2 text-left transition active:scale-[0.99]"
+              >
+                <span className="min-w-0 truncate text-xs font-medium">
+                  {m.name}
+                </span>
+                <span className="shrink-0 text-[11px] text-muted">
+                  {busyElsewhere.has(m.id)
+                    ? "already has a job"
+                    : m.note === "absent"
+                      ? "absent this month"
+                      : m.note === "credit"
+                        ? "credit — sitting out"
+                        : "＋"}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <button
+        type="button"
+        onClick={onClose}
+        className="mt-2 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition active:scale-[0.97]"
+      >
+        Done
+      </button>
     </div>
   );
 }
