@@ -6,8 +6,13 @@
  * SERVER ONLY — the flush uses the service role.
  */
 
-import { renderAnnouncementEmail, sendEmail, siteUrl } from "@/lib/email";
-import { officerTitle } from "@/lib/roles";
+import {
+  renderAnnouncementEmail,
+  type SentBy,
+  sendEmail,
+  siteUrl,
+} from "@/lib/email";
+import { officerTitle, roleOrTitleLabel } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { MessageAudience } from "@/lib/types";
 
@@ -128,9 +133,32 @@ export async function deliverMessage(args: {
     return { error: `Couldn't add recipients: ${recipientsError.message}` };
   }
 
-  await notifyByEmail(recipientIds, args.subject, args.body);
+  await notifyByEmail(recipientIds, args.subject, args.body, {
+    senderId: args.senderId,
+    senderRole: args.senderRole,
+  });
 
   return { messageId: message.id as string, recipients: recipientIds.length };
+}
+
+/**
+ * Name and title of the officer behind an announcement, for the "Sent by" line
+ * and the no-reply footnote. Best-effort: a lookup that fails just means the
+ * footnote says "an officer" instead of naming them.
+ */
+async function resolveSender(
+  admin: ReturnType<typeof createAdminClient>,
+  sender: { senderId: string; senderRole: string },
+): Promise<SentBy | null> {
+  const { data } = await admin
+    .from("members")
+    .select("full_name")
+    .eq("id", sender.senderId)
+    .maybeSingle();
+  if (!data?.full_name) return null;
+  // senderRole already holds the display title for custom officers; the
+  // classic roles are stored as keys and need the label lookup.
+  return { name: data.full_name, title: roleOrTitleLabel(sender.senderRole) };
 }
 
 /**
@@ -143,9 +171,11 @@ async function notifyByEmail(
   recipientIds: string[],
   subject: string,
   body: string,
+  sender: { senderId: string; senderRole: string },
 ): Promise<void> {
   try {
     const admin = createAdminClient();
+    const sentBy = await resolveSender(admin, sender);
     const { data } = await admin
       .from("members")
       .select("full_name, email")
@@ -164,13 +194,17 @@ async function notifyByEmail(
         sendEmail({
           to: m.email,
           subject: `New announcement: ${subject}`,
-          text: `Hi ${m.full_name.split(" ")[0] || m.full_name},\n\nYou have a new announcement from the LACC officers:\n\n${subject}\n\n${body}\n\nOpen your inbox: ${url}\n`,
+          text: `Hi ${m.full_name.split(" ")[0] || m.full_name},\n\nYou have a new announcement from the LACC officers:\n\n${subject}\n\n${body}\n\nOpen your inbox: ${url}\n${
+            sentBy ? `\nSent by ${sentBy.name}${sentBy.title ? `, ${sentBy.title}` : ""}\n` : ""
+          }`,
           html: renderAnnouncementEmail({
             name: m.full_name,
             subject,
             body,
             url,
+            sentBy,
           }),
+          sentBy,
         }),
       ),
     );

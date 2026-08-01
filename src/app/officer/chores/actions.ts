@@ -1,9 +1,12 @@
 ﻿"use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { requireOfficer } from "@/lib/auth";
 import { generateMonthlyDraft } from "@/lib/chore-algorithm";
 import { parseSchedule } from "@/lib/chores";
+import { emailNewAssignments } from "@/lib/job-assignment-email";
+import { officerTitle } from "@/lib/roles";
 import { addMonths, monthLabel } from "@/lib/studio";
 import type { ChoreInterval } from "@/lib/types";
 
@@ -198,6 +201,16 @@ export async function assignChore(
     }
     return { error: error.message };
   }
+
+  // Tell them. After the response, so the officer's board updates immediately
+  // and a slow (or dead) mail provider never stalls the assign button.
+  after(() =>
+    emailNewAssignments({
+      assignments: [{ chore_id: choreId, member_id: memberId }],
+      month,
+      sentBy: { name: member.full_name, title: officerTitle(member) },
+    }),
+  );
 
   revalidatePath("/officer/chores");
   revalidatePath("/officer/members");
@@ -452,13 +465,25 @@ export async function publishReshuffle(input: {
       month: targetMonth,
       assigned_by: member.id,
     }));
-    const { error } = await supabase
+    // RETURNING on an ON CONFLICT DO NOTHING gives back only the rows that
+    // were really inserted — so republishing a draft, or publishing one that
+    // repeats an earlier manual assignment, emails nobody twice.
+    const { data: inserted, error } = await supabase
       .from("chore_assignments")
       .upsert(rows, {
         onConflict: "chore_id,member_id,month",
         ignoreDuplicates: true,
-      });
+      })
+      .select("chore_id, member_id");
     if (error) return { error: error.message };
+
+    after(() =>
+      emailNewAssignments({
+        assignments: inserted ?? [],
+        month: targetMonth,
+        sentBy: { name: member.full_name, title: officerTitle(member) },
+      }),
+    );
   }
 
   // Spend the oldest available credit per exempted member — unless a credit

@@ -20,12 +20,39 @@ import { richTextToHtml } from "@/lib/richtext";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
+/**
+ * Who wrote this, when a person did. Announcements carry one; the automated
+ * mail (reminders, welcome, reset) doesn't, and the footnote below reads
+ * "an officer" instead of a name.
+ */
+export type SentBy = { name: string; title: string | null };
+
 type SendArgs = {
   to: string | string[];
   subject: string;
   html: string;
   text: string;
+  /** Pass the same value given to the render* helper so both halves match. */
+  sentBy?: SentBy | null;
 };
+
+/** First name, for the conversational half of the no-reply footnote. */
+function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
+/**
+ * The one thing every email we send has to say: this address is a robot.
+ *
+ * Nobody reads replies to noreply@laccstudio.org — members who hit Reply were
+ * writing into a void. Appended to the plain-text body by sendEmail() and to
+ * the HTML by shell(), so a new template can't forget it.
+ */
+function noReplyNote(sentBy?: SentBy | null): string {
+  const who = sentBy ? `contact ${firstName(sentBy.name)} directly` : "contact an officer directly";
+  const reach = sentBy ? "the person who sent it" : "anyone";
+  return `This mailbox isn't monitored. To reply, use the LACC Studio app or ${who} — replying to this email will not reach ${reach}.`;
+}
 
 type SendResult =
   | { ok: true }
@@ -56,7 +83,9 @@ export async function sendEmail(args: SendArgs): Promise<SendResult> {
         to: recipients,
         subject: args.subject,
         html: args.html,
-        text: args.text,
+        // Every plain-text body ends with the no-reply note, whether or not
+        // the template that built it remembered to add one.
+        text: `${args.text.replace(/\s+$/, "")}\n\n--\n${noReplyNote(args.sentBy)}\n`,
       }),
     });
 
@@ -102,8 +131,15 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Shared, inline-styled shell so both templates read as one brand. */
-function shell(bodyHtml: string): string {
+/** Shared, inline-styled shell so every template reads as one brand. */
+function shell(bodyHtml: string, sentBy?: SentBy | null): string {
+  const signature = sentBy
+    ? `<p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #efece7;font-size:13px;color:#8a8479;">
+         Sent by <strong style="color:#3d3a35;">${escapeHtml(sentBy.name)}</strong>${
+           sentBy.title ? `, ${escapeHtml(sentBy.title)}` : ""
+         }
+       </p>`
+    : "";
   return `<!doctype html>
 <html>
   <body style="margin:0;background:#f5f4f2;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1c1a17;">
@@ -116,11 +152,13 @@ function shell(bodyHtml: string): string {
       <tr>
         <td style="padding:28px;">
           ${bodyHtml}
+          ${signature}
         </td>
       </tr>
       <tr>
         <td style="padding:18px 28px;background:#faf8f5;color:#8a8479;font-size:12px;line-height:1.5;">
-          Los Alamos Community Ceramics · You're receiving this because you have an account in the LACC Studio app.
+          <span style="display:block;color:#6f6a60;">${escapeHtml(noReplyNote(sentBy))}</span>
+          <span style="display:block;margin-top:8px;">Los Alamos Community Ceramics · You're receiving this because you have an account in the LACC Studio app.</span>
         </td>
       </tr>
     </table>
@@ -137,11 +175,13 @@ export function renderAnnouncementEmail(args: {
   subject: string;
   body: string;
   url: string;
+  sentBy?: SentBy | null;
 }): string {
   const name = escapeHtml(args.name.split(" ")[0] || args.name);
   const subject = escapeHtml(args.subject);
   const body = escapeHtml(args.body).replace(/\n/g, "<br>");
-  return shell(`
+  return shell(
+    `
     <p style="margin:0 0 4px;font-size:15px;color:#8a8479;">Hi ${name},</p>
     <p style="margin:0 0 16px;font-size:15px;">You have a new announcement from the LACC officers:</p>
     <div style="border-left:3px solid #c2683a;padding:4px 0 4px 16px;margin:0 0 20px;">
@@ -149,7 +189,58 @@ export function renderAnnouncementEmail(args: {
       <p style="margin:0;font-size:15px;line-height:1.55;color:#3d3a35;">${body}</p>
     </div>
     <p style="margin:0 0 8px;"><a href="${args.url}" style="${BUTTON}">Open your inbox</a></p>
-  `);
+  `,
+    args.sentBy,
+  );
+}
+
+/**
+ * Email sent the moment a member picks up a job — by hand from the jobs board,
+ * or in the batch when the month's draft is published.
+ *
+ * Only ever lists jobs that were newly created, so republishing a draft (or
+ * an officer fixing one row) can't re-announce the whole month.
+ */
+export function renderJobAssignedEmail(args: {
+  name: string;
+  monthText: string; // "August 2026"
+  jobs: { name: string; description: string | null; dueText: string }[];
+  url: string;
+  sentBy?: SentBy | null;
+}): string {
+  const name = escapeHtml(args.name.split(" ")[0] || args.name);
+  const one = args.jobs.length === 1;
+  const jobs = args.jobs
+    .map(
+      (j) => `
+      <div style="border-left:3px solid #c2683a;padding:4px 0 4px 16px;margin:0 0 14px;">
+        <p style="margin:0;font-size:16px;font-weight:700;">${escapeHtml(j.name)}</p>
+        <p style="margin:2px 0 0;font-size:13px;color:#8a8479;">${escapeHtml(j.dueText)}</p>
+        ${
+          j.description
+            ? richTextToHtml(
+                j.description,
+                "margin:6px 0 0;font-size:14px;line-height:1.5;color:#3d3a35;",
+              )
+            : ""
+        }
+      </div>`,
+    )
+    .join("");
+  return shell(
+    `
+    <p style="margin:0 0 4px;font-size:15px;color:#8a8479;">Hi ${name},</p>
+    <p style="margin:0 0 16px;font-size:15px;">You've been assigned ${
+      one ? "a studio job" : `${args.jobs.length} studio jobs`
+    } for <strong>${escapeHtml(args.monthText)}</strong>:</p>
+    ${jobs}
+    <p style="margin:6px 0 20px;font-size:14px;color:#3d3a35;">Pick a day that works for you in the app, and mark ${
+      one ? "it" : "them"
+    } off once done.</p>
+    <p style="margin:0 0 8px;"><a href="${args.url}" style="${BUTTON}">Open LACC Studio</a></p>
+  `,
+    args.sentBy,
+  );
 }
 
 /** Email nudging a member about their still-pending job(s) for the month. */

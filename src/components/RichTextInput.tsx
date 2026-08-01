@@ -18,6 +18,10 @@ const TOOLS: Tool[] = [
  * uncontrolled so the surrounding <form action={…}> and its reset() keep
  * working untouched; `preview` mirrors it purely to show the officer what the
  * markers will look like on a member's phone.
+ *
+ * The box grows to fit whatever is in it: a long description written months ago
+ * is fully readable the moment you open the editor, instead of hiding most of
+ * itself behind a three-line scroll. `rows` is the floor, not the height.
  */
 export function RichTextInput({
   name,
@@ -33,13 +37,37 @@ export function RichTextInput({
   const ref = useRef<HTMLTextAreaElement>(null);
   const [preview, setPreview] = useState(defaultValue);
 
+  /**
+   * Match the height to the content. Collapsing to "auto" first is what lets
+   * the box shrink again after text is deleted — scrollHeight never reports
+   * less than the current height.
+   */
+  const autoGrow = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    // The box is border-box but scrollHeight isn't — without adding the border
+    // back, every field keeps a 2px scroll it can never satisfy.
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = `${el.scrollHeight + border}px`;
+  };
+
+  // Fit the existing description on open (the edit form only mounts when the
+  // officer taps Edit, so this runs with real layout available), and again
+  // whenever a different job's text is passed in.
+  useEffect(autoGrow, [defaultValue]);
+
   // A successful add calls form.reset(), which restores the textarea's
   // defaultValue without telling React — follow it so the preview doesn't keep
-  // showing the job that was just saved.
+  // showing the job that was just saved. Resize on the next frame: at event
+  // time the field still holds the old text.
   useEffect(() => {
     const form = ref.current?.form;
     if (!form) return;
-    const onReset = () => setPreview(defaultValue);
+    const onReset = () => {
+      setPreview(defaultValue);
+      requestAnimationFrame(autoGrow);
+    };
     form.addEventListener("reset", onReset);
     return () => form.removeEventListener("reset", onReset);
   }, [defaultValue]);
@@ -52,6 +80,7 @@ export function RichTextInput({
     el.focus();
     el.setSelectionRange(start, end);
     setPreview(value);
+    autoGrow(); // bulleting a block can add a line to every row
   };
 
   const wrap = (delim: string) => {
@@ -133,8 +162,14 @@ export function RichTextInput({
         placeholder={placeholder}
         autoComplete="off"
         onKeyDown={onKeyDown}
-        onChange={(e) => setPreview(e.target.value)}
-        className="mt-1.5 w-full resize-y rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+        onChange={(e) => {
+          setPreview(e.target.value);
+          autoGrow();
+        }}
+        // Never smaller than `rows` lines: text-sm leading (1.25rem) per row,
+        // plus py-2.5 top and bottom, plus the border.
+        style={{ minHeight: `calc(${rows} * 1.25rem + 1.25rem + 2px)` }}
+        className="mt-1.5 w-full resize-none overflow-hidden rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
       />
       {preview.trim() && hasMarkup(preview) && (
         <div className="mt-1.5 rounded-xl border border-dashed border-border px-3 py-2">
