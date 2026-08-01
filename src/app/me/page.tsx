@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { flushDueMessages } from "@/lib/messages";
 import { isOfficer } from "@/lib/roles";
 import {
   formatStudioDateTime,
@@ -17,6 +19,8 @@ import {
   type Shift,
 } from "@/lib/time";
 import type { ChoreInterval } from "@/lib/types";
+import { readAltSession } from "@/lib/alt-session";
+import { AccountSwitcher } from "@/components/AccountSwitcher";
 import { Wordmark } from "@/components/Brand";
 import { AnnouncementsBanner } from "@/components/AnnouncementsBanner";
 import { LogoutButton } from "@/components/LogoutButton";
@@ -49,6 +53,20 @@ export default async function MePage() {
 
   // Forgot to sign out yesterday? Shifts close at end of that studio day.
   await supabase.rpc("close_stale_shifts");
+
+  // The officer account parked on this device, if any (see lib/alt-session).
+  const parked = await readAltSession();
+
+  // Members open this page all day, which is what makes a scheduled
+  // announcement land close to its time on a plan with no minute-level cron.
+  // Runs after the response and never affects it.
+  after(async () => {
+    try {
+      await flushDueMessages();
+    } catch (err) {
+      console.error("[messages] flush from /me failed:", err);
+    }
+  });
 
   const month = monthKey();
 
@@ -136,11 +154,19 @@ export default async function MePage() {
     <main className="anim-fade mx-auto flex min-h-dvh w-full max-w-md flex-col px-5 py-6">
       {/* Measures phone-vs-server clock drift so a queued tap is stamped right. */}
       <ServerClock />
-      <header className="flex items-center justify-between">
+      <header className="flex items-center justify-between gap-3">
         <Wordmark />
-        <form action={signOutAuth}>
-          <LogoutButton />
-        </form>
+        <div className="flex items-center gap-3">
+          <AccountSwitcher
+            current={{ label: member.full_name, kind: "member" }}
+            parked={parked ? { label: parked.label, kind: parked.kind } : null}
+          />
+          <form action={signOutAuth} className="shrink-0">
+            {/* nowrap: with the switcher beside it, "Log out" otherwise breaks
+                across two lines in the phone-width header. */}
+            <LogoutButton className="whitespace-nowrap text-sm text-muted" />
+          </form>
+        </div>
       </header>
 
       <div className="mt-6">

@@ -2,10 +2,36 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { setOfficerStatus } from "../members/actions";
+import { setKilnTeam, setOfficerStatus } from "../members/actions";
 
-/** One member row in the president's officer-status list. */
-export type StatusMember = { id: string; name: string; officer: boolean };
+/** One member row in the exemption lists below. */
+export type StatusMember = {
+  id: string;
+  name: string;
+  officer: boolean;
+  kilnTeam: boolean;
+};
+
+type Kind = "officer" | "kiln";
+
+const KINDS = {
+  officer: {
+    heading: "Officer status",
+    blurb:
+      "Members on the board. They keep their normal account — they just sit out the monthly job draft, without spending a credit. Untick someone and they're back in the next draft. You can still hand an officer a job by assigning it directly.",
+    chip: "Officer",
+    read: (m: StatusMember) => m.officer,
+    save: setOfficerStatus,
+  },
+  kiln: {
+    heading: "Kiln team",
+    blurb:
+      "Members whose kiln work stands in for a monthly job. Same deal as officer status — they sit out the draft without spending a credit — and they're selectable as their own group when you send an announcement.",
+    chip: "Kiln team",
+    read: (m: StatusMember) => m.kilnTeam,
+    save: setKilnTeam,
+  },
+} as const satisfies Record<Kind, unknown>;
 
 /**
  * President-only: tick the members who serve on the board. Officer status is
@@ -14,9 +40,25 @@ export type StatusMember = { id: string; name: string; officer: boolean };
  * officer logins are the panel above; this is the roster of people.)
  */
 export function OfficerStatusPanel({ members }: { members: StatusMember[] }) {
+  return <StatusPanel members={members} kind="officer" />;
+}
+
+/** The same list for the kiln team — any officer who can manage members. */
+export function KilnTeamPanel({ members }: { members: StatusMember[] }) {
+  return <StatusPanel members={members} kind="kiln" />;
+}
+
+function StatusPanel({
+  members,
+  kind,
+}: {
+  members: StatusMember[];
+  kind: Kind;
+}) {
+  const config = KINDS[kind];
   const router = useRouter();
   const [checked, setChecked] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(members.map((m) => [m.id, m.officer])),
+    Object.fromEntries(members.map((m) => [m.id, config.read(m)])),
   );
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -27,12 +69,13 @@ export function OfficerStatusPanel({ members }: { members: StatusMember[] }) {
     const granted: string[] = [];
     const revoked: string[] = [];
     for (const m of members) {
-      const now = checked[m.id] ?? m.officer;
-      if (now && !m.officer) granted.push(m.id);
-      if (!now && m.officer) revoked.push(m.id);
+      const was = config.read(m);
+      const now = checked[m.id] ?? was;
+      if (now && !was) granted.push(m.id);
+      if (!now && was) revoked.push(m.id);
     }
     return { granted, revoked };
-  }, [members, checked]);
+  }, [members, checked, config]);
 
   const dirty = granted.length + revoked.length > 0;
 
@@ -41,7 +84,9 @@ export function OfficerStatusPanel({ members }: { members: StatusMember[] }) {
     ? members.filter((m) => m.name.toLowerCase().includes(q))
     : members;
 
-  const officerCount = members.filter((m) => checked[m.id] ?? m.officer).length;
+  const exemptCount = members.filter(
+    (m) => checked[m.id] ?? config.read(m),
+  ).length;
 
   const save = () => {
     setError(null);
@@ -52,14 +97,14 @@ export function OfficerStatusPanel({ members }: { members: StatusMember[] }) {
         [revoked, false],
       ] as const) {
         if (ids.length === 0) continue;
-        const res = await setOfficerStatus(ids, value);
+        const res = await config.save(ids, value);
         if ("error" in res) {
           setError(res.error);
           return;
         }
       }
       setMessage(
-        `Saved — ${officerCount} member${officerCount === 1 ? "" : "s"} exempt from jobs.`,
+        `Saved — ${exemptCount} member${exemptCount === 1 ? "" : "s"} exempt from jobs.`,
       );
       router.refresh();
     });
@@ -67,13 +112,8 @@ export function OfficerStatusPanel({ members }: { members: StatusMember[] }) {
 
   return (
     <section className="mt-10">
-      <h2 className="text-xl font-bold tracking-tight">Officer status</h2>
-      <p className="mt-1 text-sm text-muted">
-        Members on the board. They keep their normal account — they just sit out
-        the monthly job draft, without spending a credit. Untick someone and
-        they&apos;re back in the next draft. You can still hand an officer a job
-        by assigning it directly.
-      </p>
+      <h2 className="text-xl font-bold tracking-tight">{config.heading}</h2>
+      <p className="mt-1 text-sm text-muted">{config.blurb}</p>
 
       <div className="mt-4 rounded-2xl border border-border bg-surface px-5 py-5">
         {members.length === 0 ? (
@@ -96,7 +136,7 @@ export function OfficerStatusPanel({ members }: { members: StatusMember[] }) {
               ) : (
                 <ul className="divide-y divide-border">
                   {visible.map((m) => {
-                    const on = checked[m.id] ?? m.officer;
+                    const on = checked[m.id] ?? config.read(m);
                     return (
                       <li key={m.id}>
                         <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5">
@@ -117,7 +157,7 @@ export function OfficerStatusPanel({ members }: { members: StatusMember[] }) {
                           </span>
                           {on && (
                             <span className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
-                              Officer
+                              {config.chip}
                             </span>
                           )}
                         </label>
@@ -138,7 +178,7 @@ export function OfficerStatusPanel({ members }: { members: StatusMember[] }) {
                 {pending ? "Saving…" : "Save changes"}
               </button>
               <span className="text-xs text-muted">
-                {officerCount} of {members.length} exempt from jobs
+                {exemptCount} of {members.length} exempt from jobs
                 {dirty && " · unsaved changes"}
               </span>
             </div>

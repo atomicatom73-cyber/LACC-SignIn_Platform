@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
+import { RichTextInput } from "@/components/RichTextInput";
 import { INTERVAL_OPTIONS } from "@/lib/chores";
 import { SchedulingToggle } from "./SchedulingToggle";
 import { createChore } from "./actions";
@@ -84,11 +85,9 @@ export function AddJobForm() {
             </option>
           ))}
         </select>
-        <input
+        <RichTextInput
           name="description"
-          autoComplete="off"
-          placeholder="Description (optional)"
-          className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+          placeholder="Description (optional) — what needs doing, and how?"
         />
         <SchedulingToggle />
         <button

@@ -7,6 +7,8 @@ import {
   useState,
   useTransition,
 } from "react";
+import { RichText } from "@/components/RichText";
+import { RichTextInput } from "@/components/RichTextInput";
 import type { ChoreInterval } from "@/lib/types";
 import { INTERVAL_OPTIONS, intervalBadge } from "@/lib/chores";
 import { formatStudioDateTime, studioDateTimeParts } from "@/lib/studio";
@@ -48,6 +50,7 @@ export type PickerMember = {
   id: string;
   full_name: string;
   officer_status: boolean;
+  kiln_team: boolean;
 };
 
 /**
@@ -64,6 +67,15 @@ export function ChoreBoard({
   chores: BoardChore[];
   members: PickerMember[];
 }) {
+  // What's still open this month, counted the same way the reshuffle draft
+  // counts it: slots, and the jobs they're spread across. Paused jobs aren't
+  // short-handed, they're switched off.
+  const unfilled = chores
+    .filter((c) => c.active && !c.paused)
+    .map((c) => ({ name: c.name, open: c.slots - c.assignees.length }))
+    .filter((c) => c.open > 0);
+  const openSlots = unfilled.reduce((sum, c) => sum + c.open, 0);
+
   if (chores.length === 0) {
     return (
       <p className="text-sm text-muted">
@@ -74,11 +86,27 @@ export function ChoreBoard({
   }
 
   return (
-    <div className="anim-stagger grid gap-4 sm:grid-cols-2">
-      {chores.map((chore) => (
-        <ChoreCard key={chore.id} month={month} chore={chore} members={members} />
-      ))}
-    </div>
+    <>
+      {unfilled.length > 0 && (
+        <p className="mb-4 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-sm">
+          <span className="font-medium">
+            Unassigned — {openSlots} slot{openSlots === 1 ? "" : "s"} across{" "}
+            {unfilled.length} job{unfilled.length === 1 ? "" : "s"}:
+          </span>{" "}
+          {unfilled.map((c) => `${c.name} (${c.open})`).join(", ")}
+        </p>
+      )}
+      <div className="anim-stagger grid gap-4 sm:grid-cols-2">
+        {chores.map((chore) => (
+          <ChoreCard
+            key={chore.id}
+            month={month}
+            chore={chore}
+            members={members}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -215,9 +243,10 @@ function ChoreCard({
           )}
         </div>
         {chore.description && (
-          <p className="mt-1 text-sm font-medium text-foreground">
-            {chore.description}
-          </p>
+          <RichText
+            value={chore.description}
+            className="mt-1 space-y-1 text-sm font-medium text-foreground"
+          />
         )}
 
         {chore.paused ? (
@@ -299,7 +328,11 @@ function ChoreCard({
               {candidates.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.full_name}
-                  {m.officer_status ? " · officer" : ""}
+                  {m.officer_status
+                    ? " · officer"
+                    : m.kiln_team
+                      ? " · kiln team"
+                      : ""}
                 </option>
               ))}
             </select>
@@ -385,12 +418,10 @@ function ChoreCard({
               </option>
             ))}
           </select>
-          <input
+          <RichTextInput
             name="description"
-            autoComplete="off"
             defaultValue={chore.description ?? ""}
-            placeholder="Description (optional)"
-            className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+            placeholder="Description (optional) — what needs doing, and how?"
           />
           <SchedulingToggle defaultChecked={chore.schedulingEnabled} />
           <button

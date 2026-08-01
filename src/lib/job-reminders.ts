@@ -17,6 +17,7 @@
  */
 
 import { renderJobReminderEmail, sendEmail, siteUrl } from "@/lib/email";
+import { richTextToPlain } from "@/lib/richtext";
 import { monthKey, monthLabel, studioDayKey } from "@/lib/studio";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -160,7 +161,14 @@ export async function sendDueJobReminders(
         text: `Hi ${t.name.split(" ")[0] || t.name},\n\nFriendly reminder — your studio job${
           t.jobs.length === 1 ? " is" : "s are"
         } due by ${dueText}:\n\n${t.jobs
-          .map((j) => `• ${j.name}${j.description ? ` — ${j.description}` : ""}`)
+          .map(
+            (j) =>
+              `• ${j.name}${
+                j.description
+                  ? ` — ${richTextToPlain(j.description, " ")}`
+                  : ""
+              }`,
+          )
           .join("\n")}\n\nAlready done? Mark it off in the app: ${url}\n`,
         html: renderJobReminderEmail({
           name: t.name,

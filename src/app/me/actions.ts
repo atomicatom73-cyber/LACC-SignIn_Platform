@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { writeAltSession } from "@/lib/alt-session";
 import { parseSchedule } from "@/lib/chores";
 import { requestSigninLogExport } from "@/lib/signin-log-sheet";
 
@@ -128,6 +129,61 @@ export async function setMyChoreSchedule(
   return null;
 }
 
+/**
+ * Leave a note for the volunteer coordinator — either about a job you hold
+ * (pass the assignment) or just generally. It lands on the coordinator's
+ * dashboard; nobody else in the app can read it (see the job_notes policies).
+ */
+export async function leaveJobNote(input: {
+  body: string;
+  assignmentId?: string | null;
+}): Promise<{ error: string } | { success: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: member } = await supabase
+    .from("members")
+    .select("id")
+    .eq("user_id", user.id)
+    .single();
+  if (!member) return { error: "No member profile found." };
+
+  const body = input.body.trim();
+  if (!body) return { error: "Write something first." };
+  if (body.length > 1000) return { error: "That note is a bit long." };
+
+  // Only tag a job the member actually holds, so a note can't be pinned to
+  // someone else's assignment.
+  let assignmentId: string | null = null;
+  let choreId: string | null = null;
+  if (input.assignmentId) {
+    const { data: assignment } = await supabase
+      .from("chore_assignments")
+      .select("id, chore_id")
+      .eq("id", input.assignmentId)
+      .eq("member_id", member.id)
+      .maybeSingle();
+    if (assignment) {
+      assignmentId = assignment.id;
+      choreId = assignment.chore_id;
+    }
+  }
+
+  const { error } = await supabase.from("job_notes").insert({
+    member_id: member.id,
+    assignment_id: assignmentId,
+    chore_id: choreId,
+    body,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath("/me");
+  return { success: "Sent to the volunteer coordinator." };
+}
+
 export type GuestFormState =
   | { error: string }
   | { success: true; name: string }
@@ -183,5 +239,8 @@ export async function myGuestSignIn(
 export async function signOutAuth() {
   const supabase = await createClient();
   await supabase.auth.signOut();
+  // Logging out means logging out — the second account parked on this device
+  // goes with it, rather than lingering for whoever picks up the phone next.
+  await writeAltSession(null);
   redirect("/");
 }

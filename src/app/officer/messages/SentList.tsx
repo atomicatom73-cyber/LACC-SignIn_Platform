@@ -10,18 +10,31 @@ const AUDIENCE_LABELS: Record<MessageAudience, string> = {
   all: "All members",
   active: "Active members",
   inactive: "Inactive members",
+  kiln_team: "Kiln team",
   everyone: "Everyone",
-  selected: "Selected members",
+  selected: "Chosen members",
 };
 
 export type SentMessage = Pick<
   Message,
-  "id" | "sender_role" | "subject" | "body" | "audience" | "created_at"
+  | "id"
+  | "sender_role"
+  | "subject"
+  | "body"
+  | "audience"
+  | "audience_edited"
+  | "created_at"
 > & {
   recipients: { member_id: string; full_name: string; read_at: string | null }[];
 };
 
-export function SentList({ messages }: { messages: SentMessage[] }) {
+export function SentList({
+  messages,
+  onResend,
+}: {
+  messages: SentMessage[];
+  onResend: (message: SentMessage) => void;
+}) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (messages.length === 0) {
@@ -60,11 +73,25 @@ export function SentList({ messages }: { messages: SentMessage[] }) {
 
             <button
               type="button"
+              onClick={() => onResend(message)}
+              title="Copy this message, its subject, and its recipients into the composer"
+              className="mt-3 rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted transition active:scale-[0.97]"
+            >
+              ↻ Send again
+            </button>
+
+            <button
+              type="button"
               onClick={() => setExpandedId(expanded ? null : message.id)}
               className="mt-3 w-full border-t border-border pt-3 text-left"
             >
               <div className="flex items-center justify-between gap-3 text-xs text-muted">
-                <span>{AUDIENCE_LABELS[message.audience] ?? "Members"}</span>
+                <span>
+                  {AUDIENCE_LABELS[message.audience] ?? "Members"}
+                  {message.audience_edited &&
+                    message.audience !== "selected" &&
+                    " · edited"}
+                </span>
                 <span className="tabular-nums">
                   {read} of {total} read {expanded ? "▴" : "▾"}
                 </span>

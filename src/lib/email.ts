@@ -16,6 +16,8 @@
  * a missing prod env var is invisible until someone reports mail never arrived.
  */
 
+import { richTextToHtml } from "@/lib/richtext";
+
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
 type SendArgs = {
@@ -165,7 +167,10 @@ export function renderJobReminderEmail(args: {
         <p style="margin:0;font-size:16px;font-weight:700;">${escapeHtml(j.name)}</p>
         ${
           j.description
-            ? `<p style="margin:4px 0 0;font-size:14px;line-height:1.5;color:#3d3a35;">${escapeHtml(j.description)}</p>`
+            ? richTextToHtml(
+                j.description,
+                "margin:4px 0 0;font-size:14px;line-height:1.5;color:#3d3a35;",
+              )
             : ""
         }
       </div>`,

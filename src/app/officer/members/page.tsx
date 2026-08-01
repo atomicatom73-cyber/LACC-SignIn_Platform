@@ -48,7 +48,7 @@ export default async function OfficerMembersPage() {
       supabase
         .from("members")
         .select(
-          "id, user_id, full_name, role, officer_title, officer_status, pin, active, created_at, email, in_sheet, sheet_paid, sheet_payment_type, sheet_policy, sheet_photos, sheet_comments",
+          "id, user_id, full_name, role, officer_title, officer_status, kiln_team, pin, active, created_at, email, in_sheet, sheet_paid, sheet_payment_type, sheet_policy, sheet_photos, sheet_comments",
         )
         .order("full_name", { ascending: true }),
       supabase
@@ -119,6 +119,8 @@ export default async function OfficerMembersPage() {
       chip = { label: "Officer account", tone: "info" };
     } else if (m.officer_status && jobs.length === 0) {
       chip = { label: "Exempt (officer)", tone: "info" };
+    } else if (m.kiln_team && jobs.length === 0) {
+      chip = { label: "Exempt (kiln team)", tone: "info" };
     } else if (absentThisMonth) {
       chip = { label: "Absent this month", tone: "info" };
     } else if (jobs.length === 0) {
@@ -135,6 +137,7 @@ export default async function OfficerMembersPage() {
       role: m.role,
       officerTitle: m.officer_title,
       officerStatus: m.officer_status,
+      kilnTeam: m.kiln_team,
       active: m.active,
       created_at: m.created_at,
       hasAccount: m.user_id !== null,

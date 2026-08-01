@@ -1,13 +1,25 @@
 import Link from "next/link";
 import { requireOfficer } from "@/lib/auth";
-import { hasPermission } from "@/lib/roles";
+import { hasPermission, isVolunteerCoordinator } from "@/lib/roles";
 import { formatStudioDateTime, monthKey, monthLabel } from "@/lib/studio";
+import { NotesCard, type DashboardNote } from "./NotesCard";
 
 export const dynamic = "force-dynamic";
+
+/** Raw row shape for the notes query below. */
+type NoteRow = {
+  id: string;
+  body: string;
+  created_at: string;
+  handled_at: string | null;
+  members: { full_name: string } | null;
+  chores: { name: string } | null;
+};
 
 export default async function OfficerOverviewPage() {
   const { supabase, member } = await requireOfficer();
   const month = monthKey();
+  const seesNotes = isVolunteerCoordinator(member);
 
   const [membersRes, inStudioRes, assignmentsRes, eventRes] =
     await Promise.all([
@@ -31,6 +43,30 @@ export default async function OfficerOverviewPage() {
         .order("starts_at", { ascending: true })
         .limit(1),
     ]);
+
+  // Notes are the coordinator's alone, so don't even ask for them otherwise.
+  // members!…: job_notes has two FKs to members (member_id, handled_by), so
+  // the embed must name the one it means or PostgREST rejects the query.
+  const notes: DashboardNote[] = seesNotes
+    ? (
+        ((
+          await supabase
+            .from("job_notes")
+            .select(
+              "id, body, created_at, handled_at, members!job_notes_member_id_fkey(full_name), chores(name)",
+            )
+            .order("created_at", { ascending: false })
+            .limit(50)
+        ).data ?? []) as unknown as NoteRow[]
+      ).map((n) => ({
+        id: n.id,
+        memberName: n.members?.full_name ?? "Unknown member",
+        choreName: n.chores?.name ?? null,
+        body: n.body,
+        createdAt: n.created_at,
+        handledAt: n.handled_at,
+      }))
+    : [];
 
   const memberCount = membersRes.count ?? 0;
   const inStudio = inStudioRes.count ?? 0;
@@ -62,6 +98,8 @@ export default async function OfficerOverviewPage() {
           small
         />
       </div>
+
+      {seesNotes && <NotesCard notes={notes} />}
 
       <div className="anim-stagger mt-8 grid gap-4 sm:grid-cols-2">
         {hasPermission(member, "jobs") && (

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireOfficer } from "@/lib/auth";
-import { memberLoginEmail } from "@/lib/roles";
+import { hasPermission, memberLoginEmail } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requestMembersSheetSync } from "@/lib/members-sheet";
 import { monthLabel } from "@/lib/studio";
@@ -147,6 +147,45 @@ export async function setOfficerStatus(
   revalidatePath("/officer/members");
   revalidatePath("/officer/account");
   revalidatePath("/officer/chores");
+  return { updated: data?.length ?? 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Kiln team — any officer who can manage members. Kiln-team members sit out
+// the monthly draft like officers do (their kiln work is the contribution) and
+// can be messaged as a group. Same admin-client write as officer status:
+// protect_role_change locks the column against client sessions, so a member
+// can't exempt themselves by updating their own row.
+// ---------------------------------------------------------------------------
+
+/** Put one or more members on (or off) the kiln team. */
+export async function setKilnTeam(
+  memberIds: string[],
+  kilnTeam: boolean,
+): Promise<{ error: string } | { updated: number }> {
+  const { member: viewer } = await requireOfficer("members");
+  if (!hasPermission(viewer, "members")) {
+    return { error: "You don't have permission to manage members." };
+  }
+
+  const ids = [...new Set(memberIds.filter(Boolean))];
+  if (ids.length === 0) return { updated: 0 };
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("members")
+    .update({ kiln_team: kilnTeam })
+    // Like officer status: only meaningful on a real member row, never on a
+    // shared officer login.
+    .eq("role", "member")
+    .in("id", ids)
+    .select("id");
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/members");
+  revalidatePath("/officer/account");
+  revalidatePath("/officer/chores");
+  revalidatePath("/officer/messages");
   return { updated: data?.length ?? 0 };
 }
 

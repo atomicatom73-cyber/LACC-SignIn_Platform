@@ -1,5 +1,7 @@
 import { requireOfficer } from "@/lib/auth";
+import { readAltSession } from "@/lib/alt-session";
 import { hasPermission, officerTitle } from "@/lib/roles";
+import { AccountSwitcher } from "@/components/AccountSwitcher";
 import { Wordmark } from "@/components/Brand";
 import { LogoutButton } from "@/components/LogoutButton";
 import { signOutAuth } from "@/app/me/actions";
@@ -11,17 +13,21 @@ export default async function OfficerLayout({
   children: React.ReactNode;
 }) {
   const { member } = await requireOfficer();
+  const parked = await readAltSession();
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-5 py-6">
       <header className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Wordmark />
         <div className="flex items-center gap-3">
-          <span className="rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent">
-            {officerTitle(member)}
-          </span>
-          <form action={signOutAuth}>
-            <LogoutButton />
+          <AccountSwitcher
+            current={{ label: officerTitle(member), kind: "officer" }}
+            parked={
+              parked ? { label: parked.label, kind: parked.kind } : null
+            }
+          />
+          <form action={signOutAuth} className="shrink-0">
+            <LogoutButton className="whitespace-nowrap text-sm text-muted" />
           </form>
         </div>
       </header>

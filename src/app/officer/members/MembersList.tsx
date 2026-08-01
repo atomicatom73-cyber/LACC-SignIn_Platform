@@ -89,6 +89,11 @@ export function MembersList({
                           Officer
                         </span>
                       )}
+                      {member.role === "member" && member.kilnTeam && (
+                        <span className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                          Kiln team
+                        </span>
+                      )}
                       {member.role === "member" && !member.hasAccount && (
                         <span className="shrink-0 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
                           No account

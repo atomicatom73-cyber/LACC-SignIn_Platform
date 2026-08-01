@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sendDueJobReminders } from "@/lib/job-reminders";
 import { syncMembersSheet } from "@/lib/members-sheet";
+import { flushDueMessages } from "@/lib/messages";
 import {
   exportSigninLogs,
   signinLogSheetConfigured,
@@ -44,13 +45,17 @@ export async function GET(request: Request) {
     ? await run(exportSigninLogs)
     : { skipped: "GOOGLE_SIGNIN_LOG_SHEET_ID not set" };
   const jobReminders = await run(() => sendDueJobReminders());
+  // Backstop for scheduled announcements: page loads normally send them within
+  // minutes, but a quiet studio shouldn't hold a message overnight.
+  const scheduledMessages = await run(flushDueMessages);
 
   const failed =
     (members as { error?: string }).error ||
     (signinLogs as { error?: string }).error ||
-    (jobReminders as { error?: string }).error;
+    (jobReminders as { error?: string }).error ||
+    (scheduledMessages as { error?: string }).error;
   return NextResponse.json(
-    { ok: !failed, members, signinLogs, jobReminders },
+    { ok: !failed, members, signinLogs, jobReminders, scheduledMessages },
     { status: failed ? 500 : 200 },
   );
 }

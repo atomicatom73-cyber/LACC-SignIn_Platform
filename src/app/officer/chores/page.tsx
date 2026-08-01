@@ -53,7 +53,7 @@ export default async function OfficerChoresPage({
         .order("created_at", { ascending: true }),
       supabase
         .from("members")
-        .select("id, full_name, officer_status")
+        .select("id, full_name, officer_status, kiln_team")
         .eq("role", "member")
         .eq("active", true)
         .order("full_name", { ascending: true }),
@@ -109,6 +109,12 @@ export default async function OfficerChoresPage({
     .filter((m) => m.officer_status)
     .map((m) => m.full_name);
 
+  // Officer status wins the label when someone holds both, so nobody is
+  // listed twice.
+  const kilnTeamNames = members
+    .filter((m) => m.kiln_team && !m.officer_status)
+    .map((m) => m.full_name);
+
   // Coverage for the reshuffle card's chart, before any draft: everyone in the
   // rotation (officers sit out) and how many jobs they hold this month.
   const jobsPerMember = new Map<string, number>();
@@ -116,7 +122,7 @@ export default async function OfficerChoresPage({
     jobsPerMember.set(a.member_id, (jobsPerMember.get(a.member_id) ?? 0) + 1);
   }
   const published = members
-    .filter((m) => !m.officer_status)
+    .filter((m) => !m.officer_status && !m.kiln_team)
     .map((m) => ({
       id: m.id,
       name: m.full_name,
@@ -207,6 +213,15 @@ export default async function OfficerChoresPage({
             Officers (exempt from jobs):
           </span>{" "}
           {officerNames.join(", ")}
+        </p>
+      )}
+
+      {kilnTeamNames.length > 0 && (
+        <p className="mt-2 text-sm text-muted">
+          <span className="font-medium text-foreground">
+            Kiln team (exempt from jobs):
+          </span>{" "}
+          {kilnTeamNames.join(", ")}
         </p>
       )}
 

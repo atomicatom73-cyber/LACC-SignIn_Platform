@@ -16,6 +16,8 @@ export type Member = {
   permissions: Partial<Record<Permission, boolean>> | null;
   /** Board officer: keeps a member account but sits out the auto-job draft. */
   officer_status: boolean;
+  /** Kiln team: also sits out the draft, and is its own message audience. */
+  kiln_team: boolean;
   /** Real contact/login-alias email; null for members who haven't added one. */
   email: string | null;
   /** True when the last roster sync matched this member to a sheet row. */
@@ -123,6 +125,7 @@ export type MessageAudience =
   | "selected"
   | "active"
   | "inactive"
+  | "kiln_team"
   | "everyone";
 
 export type Message = {
@@ -133,7 +136,30 @@ export type Message = {
   subject: string;
   body: string;
   audience: MessageAudience;
+  /** The officer hand-edited the group's recipient list before sending. */
+  audience_edited: boolean;
   created_at: string;
+};
+
+/**
+ * An announcement that hasn't gone out yet: a saved draft (scheduled_for null)
+ * or a scheduled send. Private to the officer account that wrote it.
+ */
+export type MessageDraft = {
+  id: string;
+  author_id: string;
+  subject: string;
+  body: string;
+  audience: MessageAudience;
+  /** Null = "whoever is in the audience group at send time". */
+  recipient_ids: string[] | null;
+  edited: boolean;
+  scheduled_for: string | null;
+  sent_at: string | null;
+  message_id: string | null;
+  send_error: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type MessageRecipient = {

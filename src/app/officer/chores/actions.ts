@@ -288,13 +288,14 @@ export type ReshufflePreview = {
   creditSpends: { id: string; name: string }[];
   absentNames: string[];
   officerNames: string[];
-  /** Everyone who was in the draw (not an officer, absent, or holding a
-   *  credit) — the UI diffs this against the edited draft for the coverage
-   *  chart and the "no job" list. */
+  kilnTeamNames: string[];
+  /** Everyone who was in the draw (not an officer, kiln team, absent, or
+   *  holding a credit) — the UI diffs this against the edited draft for the
+   *  coverage chart and the "no job" list. */
   eligibleMembers: { id: string; name: string }[];
-  /** Who the "+" picker offers: every active member except officers. Absent
-   *  members and credit holders are in the list but tagged, so adding one is
-   *  a deliberate override rather than an accident. */
+  /** Who the "+" picker offers: every active member except officers and the
+   *  kiln team. Absent members and credit holders are in the list but tagged,
+   *  so adding one is a deliberate override rather than an accident. */
   pickerMembers: { id: string; name: string; note: "absent" | "credit" | null }[];
   warnings: string[];
   existingCount: number;
@@ -322,7 +323,7 @@ export async function previewReshuffle(
         .order("name", { ascending: true }),
       supabase
         .from("members")
-        .select("id, full_name, officer_status")
+        .select("id, full_name, officer_status, kiln_team")
         .eq("active", true)
         .eq("role", "member")
         .order("full_name", { ascending: true }),
@@ -370,12 +371,14 @@ export async function previewReshuffle(
     officerMemberIds: members
       .filter((m) => m.officer_status)
       .map((m) => m.id),
+    kilnTeamMemberIds: members.filter((m) => m.kiln_team).map((m) => m.id),
   });
 
   const nameOf = new Map(members.map((m) => [m.id, m.full_name]));
   const chore = new Map(chores.map((c) => [c.id, c]));
   const exempt = new Set([
     ...draft.exemptOfficers,
+    ...draft.exemptKilnTeam,
     ...draft.exemptAbsent,
     ...draft.creditsToConsume,
   ]);
@@ -402,11 +405,14 @@ export async function previewReshuffle(
       officerNames: draft.exemptOfficers.map(
         (id) => nameOf.get(id) ?? "Unknown",
       ),
+      kilnTeamNames: draft.exemptKilnTeam.map(
+        (id) => nameOf.get(id) ?? "Unknown",
+      ),
       eligibleMembers: members
         .filter((m) => !exempt.has(m.id))
         .map((m) => ({ id: m.id, name: m.full_name })),
       pickerMembers: members
-        .filter((m) => !m.officer_status)
+        .filter((m) => !m.officer_status && !m.kiln_team)
         .map((m) => ({
           id: m.id,
           name: m.full_name,

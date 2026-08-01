@@ -207,6 +207,7 @@ export function ReshuffleCard({
   const unfilled = (preview?.proposals ?? [])
     .map((p) => ({ choreName: p.choreName, open: p.slots - p.members.length }))
     .filter((u) => u.open > 0);
+  const openSlotTotal = unfilled.reduce((sum, u) => sum + u.open, 0);
 
   const publish = () =>
     startTransition(async () => {
@@ -287,7 +288,11 @@ export function ReshuffleCard({
 
           {unfilled.length > 0 && (
             <p className="mb-3 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-sm">
-              <span className="font-medium">Unassigned:</span>{" "}
+              <span className="font-medium">
+                Unassigned — {openSlotTotal} slot
+                {openSlotTotal === 1 ? "" : "s"} across {unfilled.length} job
+                {unfilled.length === 1 ? "" : "s"}:
+              </span>{" "}
               {unfilled
                 .map((u) => `${u.choreName} (${u.open})`)
                 .join(", ")}{" "}
@@ -436,6 +441,13 @@ export function ReshuffleCard({
                 label="Officers"
                 names={preview.officerNames}
                 hint="exempt while they hold officer status"
+              />
+            )}
+            {preview.kilnTeamNames.length > 0 && (
+              <ExemptLine
+                label="Kiln team"
+                names={preview.kilnTeamNames}
+                hint="exempt while they're on the kiln team"
               />
             )}
           </div>

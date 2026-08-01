@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { RichText } from "@/components/RichText";
 import { requireOfficer } from "@/lib/auth";
 import { dueLabel } from "@/lib/chores";
 import { formatStudioDateTime, monthKey, monthLabel } from "@/lib/studio";
@@ -116,9 +117,10 @@ export default async function PrintAssignmentsPage({
                     </span>
                   </div>
                   {job.description && (
-                    <div className="mt-1 text-sm font-medium text-neutral-800">
-                      {job.description}
-                    </div>
+                    <RichText
+                      value={job.description}
+                      className="mt-1 space-y-1 text-sm font-medium text-neutral-800"
+                    />
                   )}
                 </td>
                 <td className="py-2.5">{job.members.join(", ")}</td>

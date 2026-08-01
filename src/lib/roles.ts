@@ -138,6 +138,27 @@ export function hasPermission(
   return false;
 }
 
+/**
+ * Is this the volunteer coordinator? Covers the classic shared login and a
+ * president-created officer account titled "Volunteer Coordinator", so a studio
+ * that runs the job from a custom account still sees its job notes.
+ *
+ * Job notes are scoped to this alone — not to the jobs permission, and not to
+ * the president — because the studio wanted members to have a private line to
+ * the coordinator. Mirrors public.is_volunteer_coordinator() in
+ * supabase/schema.sql — keep the two in sync.
+ */
+export function isVolunteerCoordinator(member: {
+  role: string;
+  officer_title?: string | null;
+}): boolean {
+  if (member.role === "volunteer_coordinator") return true;
+  return (
+    member.role === "officer" &&
+    (member.officer_title ?? "").trim().toLowerCase() === "volunteer coordinator"
+  );
+}
+
 /** Display name for an officer account: custom title, else the classic label. */
 export function officerTitle(member: {
   role: string;

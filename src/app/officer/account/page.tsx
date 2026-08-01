@@ -4,7 +4,11 @@ import { listOfficerAccounts } from "@/lib/officer-accounts";
 import { hasPermission, officerTitle, PERMISSIONS } from "@/lib/roles";
 import { AccountSettings } from "./AccountSettings";
 import { OfficerManager, type ManagedOfficer } from "./OfficerManager";
-import { OfficerStatusPanel, type StatusMember } from "./OfficerStatusPanel";
+import {
+  KilnTeamPanel,
+  OfficerStatusPanel,
+  type StatusMember,
+} from "./OfficerStatusPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -32,9 +36,12 @@ export default async function OfficerAccountPage() {
   }
 
   // The president also manages the other officer accounts — and which members
-  // hold officer status — from here.
+  // hold officer status — from here. Kiln team is a lighter touch: anyone who
+  // can manage members can set it.
+  const canManageMembers = hasPermission(member, "members");
   let managed: ManagedOfficer[] | null = null;
   let roster: StatusMember[] | null = null;
+
   if (member.role === "president") {
     const officers = await listOfficerAccounts();
     managed = officers.map((o) => ({
@@ -45,10 +52,12 @@ export default async function OfficerAccountPage() {
         PERMISSIONS.map((p) => [p.key, hasPermission(o, p.key)]),
       ) as ManagedOfficer["permissions"],
     }));
+  }
 
+  if (member.role === "president" || canManageMembers) {
     const { data: members } = await admin
       .from("members")
-      .select("id, full_name, officer_status")
+      .select("id, full_name, officer_status, kiln_team")
       .eq("role", "member")
       .eq("active", true)
       .order("full_name", { ascending: true });
@@ -56,6 +65,7 @@ export default async function OfficerAccountPage() {
       id: m.id,
       name: m.full_name,
       officer: m.officer_status,
+      kilnTeam: m.kiln_team,
     }));
   }
 
@@ -66,7 +76,10 @@ export default async function OfficerAccountPage() {
         initialLinkedName={linkedName}
       />
       {managed && <OfficerManager officers={managed} />}
-      {roster && <OfficerStatusPanel members={roster} />}
+      {roster && member.role === "president" && (
+        <OfficerStatusPanel members={roster} />
+      )}
+      {roster && canManageMembers && <KilnTeamPanel members={roster} />}
     </main>
   );
 }

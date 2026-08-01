@@ -1,6 +1,7 @@
 "use client";
 
 import { useOptimistic, useState, useTransition } from "react";
+import { RichText } from "@/components/RichText";
 import { dueLabel } from "@/lib/chores";
 import {
   formatStudioDateTime,
@@ -8,7 +9,7 @@ import {
   studioDateTimeParts,
 } from "@/lib/studio";
 import type { ChoreInterval } from "@/lib/types";
-import { setMyChoreSchedule, toggleMyChore } from "./actions";
+import { leaveJobNote, setMyChoreSchedule, toggleMyChore } from "./actions";
 
 export type MyChore = {
   id: string;
@@ -37,6 +38,12 @@ export function ChoresCard({
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Which note box is open: an assignment id for a job, null for the general
+  // one, or `undefined` for none. `justDone` softens the prompt right after
+  // someone ticks a job off.
+  const [note, setNote] = useState<
+    { assignmentId: string | null; justDone?: boolean } | undefined
+  >(undefined);
 
   // The card flips instantly; the server settles it (and a failure reverts).
   const [optimisticChores, flipOptimistic] = useOptimistic(
@@ -53,12 +60,20 @@ export function ChoresCard({
   );
 
   function handleToggle(id: string) {
+    const completing =
+      chores.find((c) => c.id === id)?.status === "pending";
     setBusyId(id);
     setError(null);
     startTransition(async () => {
       flipOptimistic(id);
       const res = await toggleMyChore(id);
-      if (res?.error) setError(res.error);
+      if (res?.error) {
+        setError(res.error);
+      } else if (completing) {
+        // Ticking a job off is the moment people actually have something to
+        // report ("the mop head is shot") — so offer the note right there.
+        setNote({ assignmentId: id, justDone: true });
+      }
       setBusyId(null);
     });
   }
@@ -135,9 +150,10 @@ export function ChoresCard({
                 {/* Full width, under the button — on a phone the instructions
                     are unreadable squeezed into the column beside it. */}
                 {c.choreDescription && (
-                  <div className="mt-1.5 text-sm font-medium text-foreground">
-                    {c.choreDescription}
-                  </div>
+                  <RichText
+                    value={c.choreDescription}
+                    className="mt-1.5 space-y-1 text-sm font-medium text-foreground"
+                  />
                 )}
                 {c.choreScheduling && !done && (
                   <MyScheduleRow
@@ -145,14 +161,121 @@ export function ChoresCard({
                     scheduledAt={c.scheduledAt}
                   />
                 )}
+                {note?.assignmentId === c.id ? (
+                  <NoteComposer
+                    assignmentId={c.id}
+                    hint={
+                      note.justDone
+                        ? "Nice work. Anything the volunteer coordinator should know?"
+                        : "Goes straight to the volunteer coordinator."
+                    }
+                    onClose={() => setNote(undefined)}
+                  />
+                ) : (
+                  <button
+                    onClick={() => setNote({ assignmentId: c.id })}
+                    className="mt-2 text-xs font-semibold text-muted underline-offset-2 hover:underline"
+                  >
+                    ✎ Leave a note
+                  </button>
+                )}
               </li>
             );
           })}
         </ul>
       )}
 
+      {/* Always available — "I'm away in August", "can I swap?" — whether or
+          not there's a job on the card this month. */}
+      {note && note.assignmentId === null ? (
+        <NoteComposer
+          assignmentId={null}
+          hint="Goes straight to the volunteer coordinator."
+          onClose={() => setNote(undefined)}
+        />
+      ) : (
+        <button
+          onClick={() => setNote({ assignmentId: null })}
+          className="mt-3 text-xs font-semibold text-muted underline-offset-2 hover:underline"
+        >
+          ✎ Note the volunteer coordinator
+        </button>
+      )}
+
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
     </section>
+  );
+}
+
+/**
+ * The note box itself. Deliberately plain text and one-way: it's a message to
+ * the coordinator, not a thread — the studio settles the rest in person.
+ */
+function NoteComposer({
+  assignmentId,
+  hint,
+  onClose,
+}: {
+  assignmentId: string | null;
+  hint: string;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const send = () => {
+    setError(null);
+    startTransition(async () => {
+      const res = await leaveJobNote({ body: text, assignmentId });
+      if ("error" in res) {
+        setError(res.error);
+      } else {
+        setSent(true);
+        setTimeout(onClose, 1500);
+      }
+    });
+  };
+
+  if (sent) {
+    return (
+      <p className="mt-2 rounded-xl border border-success/40 bg-success/10 px-3 py-2 text-xs">
+        Sent to the volunteer coordinator ✓
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded-xl border border-border bg-surface px-3 py-2.5">
+      <p className="text-xs text-muted">{hint}</p>
+      <textarea
+        autoFocus
+        rows={3}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        maxLength={1000}
+        placeholder="What's up?"
+        className="mt-1.5 w-full resize-y rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-sm outline-none focus:border-accent"
+      />
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <button
+          onClick={send}
+          disabled={pending || !text.trim()}
+          className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-background transition active:scale-[0.97] disabled:opacity-60"
+        >
+          {pending ? "Sending…" : "Send note"}
+        </button>
+        <button
+          onClick={onClose}
+          disabled={pending}
+          className="rounded-lg border border-border px-2.5 py-2 text-xs font-medium text-muted transition active:scale-[0.97] disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+    </div>
   );
 }
 
