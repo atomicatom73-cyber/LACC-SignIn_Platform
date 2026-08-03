@@ -6,9 +6,9 @@ import { useRouter } from "next/navigation";
 import { formatDuration } from "@/lib/time";
 import { PasswordInput } from "@/components/PasswordInput";
 import { useOfflineQueue } from "@/components/OfflineQueueSync";
+import { lastCheckedLabel, useConnection } from "@/lib/connectivity";
 import {
   enqueue,
-  isOffline,
   newEventId,
   serverReachable,
   studioNowIso,
@@ -31,6 +31,18 @@ const ROSTER_POLL_MS = 20_000;
 
 type Toast = { text: string; ms: number };
 
+/**
+ * The wall-clock time a tap taken right now would be stamped with — corrected
+ * for tablet clock drift, so it matches what actually lands in the log rather
+ * than what the tablet's own clock says.
+ */
+function formatNowClock(): string {
+  return new Date(studioNowIso()).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function RosterGrid({ members }: { members: RosterMember[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -41,8 +53,12 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   const [pinFor, setPinFor] = useState<RosterMember | null>(null);
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
+  const [staleFor, setStaleFor] = useState<RosterMember | null>(null);
   const pinInputRef = useRef<HTMLInputElement>(null);
   const { pending: queued, refresh: refreshQueue } = useOfflineQueue();
+  // Whether the studio actually answers — not `navigator.onLine`, which reads
+  // true on the studio's own wifi with a dead uplink. See lib/connectivity.
+  const { offline, isRisky, lastCheckedAt } = useConnection();
 
   // Taps taken while offline aren't in the roster the server sent — and when
   // the page is served from the service worker cache, that roster can be hours
@@ -74,20 +90,29 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   // Re-ask the server on a slow loop, so a sign-in from someone's phone reaches
   // these cards without anyone reloading the tablet. Held off while a tap is in
   // flight or a dialog is open — see the effect below.
-  const interacting = pending || pinFor !== null || accountFor !== null;
+  const interacting =
+    pending || pinFor !== null || accountFor !== null || staleFor !== null;
   const interactingRef = useRef(false);
   useEffect(() => {
     interactingRef.current = interacting;
   }, [interacting]);
 
+  // Read inside the poll below, which is set up once and must not close over a
+  // stale value — a refresh fired while cut off is the expensive mistake here.
+  const offlineRef = useRef(false);
+  useEffect(() => {
+    offlineRef.current = offline;
+  }, [offline]);
+
   useEffect(() => {
     const sync = () => {
       // Mid-tap the grid would reshuffle under a finger, and a hidden tab has
-      // nobody to show it to. Offline, a failed RSC fetch turns into a full
-      // browser navigation — and the queue overlay already covers this tablet's
+      // nobody to show it to. Cut off, a failed RSC fetch turns into a full
+      // browser navigation — which on a captive portal hands the tablet to the
+      // portal's own page — and the queue overlay already covers this tablet's
       // own taps, which are the only ones it can know about while cut off.
       if (document.visibilityState !== "visible") return;
-      if (interactingRef.current || isOffline()) return;
+      if (interactingRef.current || offlineRef.current) return;
       router.refresh();
     };
 
@@ -165,9 +190,9 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
     startTransition(async () => {
       flipOptimistic(member.id);
       try {
-        // Skip a request that can't land — offline, this is instant instead of
+        // Skip a request that can't land — cut off, this is instant instead of
         // waiting out a timeout with a finger on the screen.
-        if (isOffline()) {
+        if (offlineRef.current) {
           await queueTap(member, pinValue, goingIn);
           return;
         }
@@ -214,18 +239,33 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
     });
   }
 
-  function handleTap(member: RosterMember) {
-    if (!member.hasAccount) {
-      // No login account (imported from the sheet or officer-added): quick
-      // sign-in is members-with-accounts only — walk them to signup instead.
-      setAccountFor(member);
-    } else if (member.hasPin) {
+  /** The rest of a tap, once any staleness warning has been acknowledged. */
+  function proceed(member: RosterMember) {
+    if (member.hasPin) {
       setPinFor(member);
       setPin("");
       setPinError(null);
     } else {
       run(member, "");
     }
+  }
+
+  function handleTap(member: RosterMember) {
+    if (!member.hasAccount) {
+      // No login account (imported from the sheet or officer-added): quick
+      // sign-in is members-with-accounts only — walk them to signup instead.
+      setAccountFor(member);
+      return;
+    }
+    // Cut off, and cut off long enough that this card could have been
+    // overtaken by someone's phone. Say so before taking the tap rather than
+    // after: a sign-in queued on top of a shift that's already open can't be
+    // settled here and ends up waiting on an officer.
+    if (isRisky()) {
+      setStaleFor(member);
+      return;
+    }
+    proceed(member);
   }
 
   useEffect(() => {
@@ -275,6 +315,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
               key={m.id}
               member={m}
               busy={pending && busyId === m.id}
+              offline={offline}
               onTap={() => handleTap(m)}
             />
           ))}
@@ -310,6 +351,54 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
         </div>
       )}
 
+      {staleFor && (
+        <div className="scrim fixed inset-0 z-40 flex items-center justify-center px-6 backdrop-blur-sm">
+          <div className="anim-fade w-full max-w-sm rounded-3xl border border-border bg-surface p-6 text-center">
+            <div className="text-3xl" aria-hidden>
+              📡
+            </div>
+            <div className="mt-2 text-lg font-semibold">
+              This tablet is offline
+            </div>
+            <p className="mt-2 text-sm text-muted">
+              {lastCheckedLabel(lastCheckedAt)
+                ? `It last reached the studio at ${lastCheckedLabel(lastCheckedAt)}, so this screen may be out of date.`
+                : "It hasn't reached the studio since this page opened, so this screen may be out of date."}{" "}
+              If {staleFor.full_name.split(" ")[0]} signed{" "}
+              {staleFor.openSince ? "out" : "in"} on a phone since then, this
+              won&apos;t match and an officer will have to fix it.
+            </p>
+            <p className="mt-3 text-sm font-medium">
+              Saving this as{" "}
+              <span className="font-semibold">
+                {staleFor.openSince ? "signing out" : "signing in"}
+              </span>{" "}
+              at {formatNowClock()}.
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const member = staleFor;
+                  setStaleFor(null);
+                  proceed(member);
+                }}
+                className="rounded-2xl bg-accent px-4 py-3 font-semibold text-background transition active:scale-[0.98]"
+              >
+                Save it anyway
+              </button>
+              <button
+                type="button"
+                onClick={() => setStaleFor(null)}
+                className="rounded-2xl border border-border px-4 py-3 text-muted transition active:scale-[0.98]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pinFor && (
         <div className="scrim fixed inset-0 z-40 flex items-center justify-center px-6 backdrop-blur-sm">
           <div className="anim-fade w-full max-w-xs rounded-3xl border border-border bg-surface p-6 text-center">
@@ -318,6 +407,14 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
               Enter your 4-digit PIN to{" "}
               {pinFor.openSince ? "sign out" : "sign in"}.
             </p>
+            {offline && (
+              // Last chance to see it before committing: the PIN box is the
+              // only thing on screen at this point.
+              <p className="mt-2 rounded-xl border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-medium">
+                📡 Offline — this will be saved on the tablet and uploaded when
+                the wifi is back.
+              </p>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -383,10 +480,13 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
 function RosterCard({
   member,
   busy,
+  offline,
   onTap,
 }: {
   member: RosterMember;
   busy: boolean;
+  /** The studio can't be reached, so this tap will be saved here for later. */
+  offline: boolean;
   onTap: () => void;
 }) {
   const isIn = member.openSince !== null;
@@ -412,12 +512,25 @@ function RosterCard({
     <button
       onClick={onTap}
       disabled={busy}
-      className={`flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border p-3 text-center transition active:scale-[0.97] disabled:opacity-50 ${
+      className={`relative flex aspect-square flex-col items-center justify-center gap-1.5 rounded-2xl border p-3 text-center transition active:scale-[0.97] disabled:opacity-50 ${
+        // Dashed while cut off: the card is still tappable, but what it says
+        // came from this tablet's memory rather than from the studio.
+        offline ? "border-dashed" : ""
+      } ${
         isIn
           ? "border-success/50 bg-success/10"
           : "border-border bg-surface"
       }`}
     >
+      {offline && (
+        <span
+          className="absolute right-2 top-2 text-xs leading-none"
+          title="Offline — this tap is saved on the tablet"
+          aria-hidden
+        >
+          📡
+        </span>
+      )}
       <div
         className={`flex h-14 w-14 items-center justify-center rounded-full text-lg font-bold ${
           isIn ? "bg-success text-background" : "bg-surface-2 text-foreground"
@@ -437,6 +550,13 @@ function RosterCard({
               ? "Tap to sign in"
               : "Needs an account"}
       </div>
+      {offline && member.hasAccount && !busy && (
+        // Says what the tap will do before it's made, which the banner at the
+        // top of the screen can't do per-person.
+        <div className="text-[10px] font-medium leading-tight text-accent">
+          Saved here · uploads later
+        </div>
+      )}
     </button>
   );
 }

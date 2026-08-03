@@ -1,6 +1,7 @@
 import { after } from "next/server";
 import { requireOfficer } from "@/lib/auth";
 import { MonthGrid, type DayMarker } from "@/components/MonthGrid";
+import { ConflictList, type ConflictItem } from "./ConflictList";
 import {
   exportSigninLogsThrottled,
   signinLogSheetConfigured,
@@ -48,6 +49,14 @@ type StudentRow = {
   signed_in_at: string;
   signed_out_at: string | null;
 };
+type ConflictRow = {
+  id: string;
+  member_name: string;
+  kind: "shift-in" | "shift-out";
+  tapped_at: string;
+  via: string;
+  reason: string;
+};
 
 /** Who was in the studio, day by day. Needs the sign-in-logs permission. */
 export default async function SignInLogsPage({
@@ -81,7 +90,7 @@ export default async function SignInLogsPage({
   const startUtc = studioToUtcIso(`${ym}-01`, "00:00");
   const endUtc = studioToUtcIso(`${addMonths(month, 1).slice(0, 7)}-01`, "00:00");
 
-  const [shiftsRes, guestsRes, studentsRes] = await Promise.all([
+  const [shiftsRes, guestsRes, studentsRes, conflictsRes] = await Promise.all([
     supabase
       .from("shifts")
       .select("id, signed_in_at, signed_out_at, source, members(full_name)")
@@ -100,11 +109,30 @@ export default async function SignInLogsPage({
       )
       .gte("signed_in_at", startUtc)
       .lt("signed_in_at", endUtc),
+    // Not scoped to the month being browsed: an unresolved conflict needs
+    // attention wherever the officer happens to be looking. Errors (the
+    // migration not run yet) fall through to an empty list below.
+    supabase
+      .from("signin_conflicts")
+      .select("id, member_name, kind, tapped_at, via, reason")
+      .is("resolved_at", null)
+      .order("tapped_at", { ascending: false })
+      .limit(50),
   ]);
 
   const shifts = (shiftsRes.data ?? []) as unknown as ShiftRow[];
   const guests = (guestsRes.data ?? []) as unknown as GuestRow[];
   const students = (studentsRes.data ?? []) as unknown as StudentRow[];
+  const conflicts = (conflictsRes.data ?? []) as unknown as ConflictRow[];
+
+  const conflictItems: ConflictItem[] = conflicts.map((c) => ({
+    id: c.id,
+    memberName: c.member_name,
+    action: c.kind === "shift-in" ? "Tried to sign in" : "Tried to sign out",
+    when: formatStudioDateTime(c.tapped_at),
+    device: c.via === "phone" ? "their phone" : "the tablet",
+    reason: c.reason,
+  }));
 
   const entriesByDay = new Map<string, LogEntry[]>();
   const push = (entry: LogEntry) => {
@@ -182,6 +210,8 @@ export default async function SignInLogsPage({
         Tap a day to see who was in the studio — members, guests, and
         students.
       </p>
+
+      {conflictItems.length > 0 && <ConflictList conflicts={conflictItems} />}
 
       <div className="mt-5">
         <MonthGrid

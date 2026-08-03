@@ -3,9 +3,9 @@
 import { useEffect, useState, useTransition } from "react";
 import { formatDuration } from "@/lib/time";
 import { useOfflineQueue } from "@/components/OfflineQueueSync";
+import { lastCheckedLabel, useConnection } from "@/lib/connectivity";
 import {
   enqueue,
-  isOffline,
   latestShiftEvent,
   newEventId,
   serverReachable,
@@ -39,7 +39,11 @@ export function ClockCard({
   const [elapsed, setElapsed] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const { pending: queued, refresh: refreshQueue } = useOfflineQueue();
+  // Whether the studio actually answers — a phone with one bar reports itself
+  // online while nothing gets through. See lib/connectivity.
+  const { offline, isRisky, lastCheckedAt } = useConnection();
 
   // A tap waiting to sync isn't in the page the server rendered, and that page
   // may itself have come from the offline cache. What this phone knows wins.
@@ -82,11 +86,23 @@ export function ClockCard({
   }
 
   function tap() {
+    // Cut off long enough that this card could have been overtaken — someone
+    // signs in here, then signs out on the studio tablet, and comes back to a
+    // phone still showing them clocked in. Say so before taking the tap.
+    if (isRisky()) {
+      setConfirming(true);
+      return;
+    }
+    commit();
+  }
+
+  function commit() {
     const goingIn = !isIn;
     setError(null);
     setSaved(false);
+    setConfirming(false);
     startTransition(async () => {
-      if (isOffline()) {
+      if (offline) {
         await queueTap(goingIn);
         return;
       }
@@ -127,15 +143,60 @@ export function ClockCard({
         </div>
       )}
 
-      <button
-        onClick={tap}
-        disabled={pending}
-        className={`mt-5 w-full rounded-2xl px-6 py-5 text-lg font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
-          isIn ? "bg-danger text-background" : "bg-accent text-background"
-        }`}
-      >
-        {pending ? "…" : isIn ? "Clock out" : "Clock in"}
-      </button>
+      {offline && !confirming && (
+        // Before the tap, not after: this is the moment someone decides
+        // whether to trust the button or walk to the tablet.
+        <p className="mt-4 rounded-2xl border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-medium">
+          📡 No connection to the studio
+          {lastCheckedLabel(lastCheckedAt)
+            ? ` since ${lastCheckedLabel(lastCheckedAt)}`
+            : ""}
+          . Tapping saves this on your phone and uploads it when signal returns.
+        </p>
+      )}
+
+      {confirming ? (
+        <div className="mt-5 rounded-2xl border border-accent/30 bg-accent/10 p-4 text-left">
+          <div className="text-sm font-semibold">
+            📡 Your phone can&apos;t reach the studio
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            {lastCheckedLabel(lastCheckedAt)
+              ? `Last reached at ${lastCheckedLabel(lastCheckedAt)}, so this card may be out of date.`
+              : "It hasn't reached the studio since this page opened, so this card may be out of date."}{" "}
+            If you already signed {isIn ? "out" : "in"} on the studio tablet,
+            this won&apos;t match and an officer will have to fix it.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={commit}
+              disabled={pending}
+              className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
+                isIn ? "bg-danger text-background" : "bg-accent text-background"
+              }`}
+            >
+              {isIn ? "Clock out anyway" : "Clock in anyway"}
+            </button>
+            <button
+              onClick={() => setConfirming(false)}
+              disabled={pending}
+              className="rounded-2xl border border-border px-4 py-3 text-sm text-muted transition active:scale-[0.98]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={tap}
+          disabled={pending}
+          className={`mt-5 w-full rounded-2xl px-6 py-5 text-lg font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
+            isIn ? "bg-danger text-background" : "bg-accent text-background"
+          }`}
+        >
+          {pending ? "…" : isIn ? "Clock out" : "Clock in"}
+        </button>
+      )}
 
       {waiting && (
         <p className="mt-3 text-xs text-muted">

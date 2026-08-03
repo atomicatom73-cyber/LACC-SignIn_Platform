@@ -5,7 +5,11 @@ import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requestSigninLogExport } from "@/lib/signin-log-sheet";
-import { studioDayKey } from "@/lib/studio";
+import {
+  formatStudioClock,
+  formatStudioDateTime,
+  studioDayKey,
+} from "@/lib/studio";
 import {
   SYNC_BATCH_LIMIT,
   type QueuedEvent,
@@ -25,6 +29,15 @@ import {
  * Each event's outcome is reported separately. The client drops applied and
  * duplicate events, stops retrying rejected ones (and shows them to whoever is
  * standing at the kiosk), and keeps everything else for the next attempt.
+ *
+ * What this deliberately will NOT do is guess. An offline device knows nothing
+ * about the other devices, so its cards can be hours stale and its tap can ask
+ * for a direction the database flatly contradicts — a sign-in for someone who
+ * has been signed in since morning. Writing either reading of that into the log
+ * would be inventing a shift, so those come back `conflict`: nothing is
+ * applied, and the tap is filed in `signin_conflicts` for an officer to settle
+ * on /officer/logs. The log sheet keeps showing what actually happened until a
+ * human says otherwise.
  */
 
 /**
@@ -36,6 +49,20 @@ import {
 const MAX_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Tolerance for a tablet clock that runs slightly fast. */
 const MAX_CLOCK_LEAD_MS = 5 * 60 * 1000;
+
+/**
+ * A tap that repeats what the record already says, this soon after it, is a
+ * finger pressing twice — not someone acting on a stale card. Below this it's a
+ * duplicate; above it the two genuinely disagree and an officer is told.
+ */
+const DOUBLE_TAP_MS = 2 * 60 * 1000;
+
+/**
+ * How close a closed shift's out-time must be to a queued sign-out for the two
+ * to be the same event. Wide enough for the clamping in `clampTimestamp`,
+ * narrow enough that a different sign-out that day can't be mistaken for it.
+ */
+const SAME_SIGNOUT_MS = 2_000;
 
 type Supabase = ReturnType<typeof createAdminClient>;
 
@@ -141,7 +168,9 @@ async function applyShiftIn(
   if (error) {
     // `shifts_one_open_per_member` — some other shift is already open for this
     // member. That is NOT the same as this event having landed.
-    if (isUniqueViolation(error)) return reconcileOpenShift(supabase, event, at);
+    if (isUniqueViolation(error)) {
+      return reconcileOpenShift(supabase, event, at, check.name);
+    }
     throw new Error(error.message);
   }
   return { status: "applied" };
@@ -163,11 +192,20 @@ async function applyShiftIn(
  * shift across midnight puts it back within reach of `close_stale_shifts()`,
  * which would stamp it 23:59:59 of the earlier day — an end time already in the
  * past while the member is still standing in the studio.
+ *
+ * The other direction is the one that can't be settled here. When the open
+ * shift started *before* this tap, the member was already signed in when they
+ * tapped a card reading "Tap to sign in" — which almost always means the card
+ * was stale and they were trying to leave. Almost. Guessing "sign them out"
+ * invents an end time; guessing "ignore it" leaves them clocked in until the
+ * end-of-day sweep stamps "Forgot to sign out" in the sheet. Neither is a fact,
+ * so the tap is filed for an officer and nothing is written.
  */
 async function reconcileOpenShift(
   supabase: Supabase,
   event: Extract<QueuedEvent, { kind: "shift-in" }>,
   at: string,
+  memberName: string,
 ): Promise<Omit<SyncOutcome, "id">> {
   // The insert can also lose to its own primary key, if a concurrent replay of
   // this very event landed first. That one really is a duplicate.
@@ -189,27 +227,82 @@ async function reconcileOpenShift(
     return { status: "retry", reason: "The shift closed mid-sync." };
   }
 
-  if (
-    Date.parse(at) >= Date.parse(openShift.signed_in_at) ||
-    studioDayKey(at) !== studioDayKey(openShift.signed_in_at)
-  ) {
-    // They were already signed in when this tap happened (or it belongs to an
-    // earlier day and is no longer safe to merge): the state it asked for holds.
+  const tapAt = Date.parse(at);
+  const openAt = Date.parse(openShift.signed_in_at);
+  const sameDay = studioDayKey(at) === studioDayKey(openShift.signed_in_at);
+
+  if (tapAt < openAt && sameDay) {
+    // Move the open shift back to the real arrival, and with it the surface
+    // that arrival actually came from — the officer log reads `source` to tell
+    // a phone sign-in from a tablet one.
+    const { error } = await supabase
+      .from("shifts")
+      .update({
+        signed_in_at: at,
+        source: event.via === "phone" ? "phone" : "kiosk",
+      })
+      .eq("id", openShift.id);
+    if (error) throw new Error(error.message);
+    return { status: "applied" };
+  }
+
+  // A repeat within a couple of minutes is a finger pressing twice — the state
+  // it asked for already holds, and there is nothing for anyone to look at.
+  if (tapAt >= openAt && tapAt - openAt <= DOUBLE_TAP_MS) {
     return { status: "duplicate" };
   }
 
-  // Move the open shift back to the real arrival, and with it the surface that
-  // arrival actually came from — the officer log reads `source` to tell a phone
-  // sign-in from a tablet one.
-  const { error } = await supabase
-    .from("shifts")
-    .update({
-      signed_in_at: at,
-      source: event.via === "phone" ? "phone" : "kiosk",
-    })
-    .eq("id", openShift.id);
-  if (error) throw new Error(error.message);
-  return { status: "applied" };
+  return fileConflict(
+    supabase,
+    event,
+    at,
+    memberName,
+    sameDay
+      ? `Tapped to sign in at ${formatStudioClock(at)}, but was already signed in from ${formatStudioClock(
+          openShift.signed_in_at,
+        )} and still is. The ${
+          event.via === "phone" ? "phone" : "tablet"
+        } was offline and showing an out-of-date card — most likely they meant to sign out at ${formatStudioClock(
+          at,
+        )}.`
+      : `Tapped to sign in at ${formatStudioDateTime(at)}, but a shift opened ${formatStudioDateTime(
+          openShift.signed_in_at,
+        )} is still open. Too far apart to join up safely.`,
+  );
+}
+
+/**
+ * Hand a tap the database contradicts to an officer, and tell the device it is
+ * settled so it stops retrying.
+ *
+ * Filing is the whole point, so a failure to file must NOT look like success:
+ * the tap stays queued and comes back on the next attempt. That is also what
+ * happens on a deploy where the code is live but the migration hasn't been run
+ * — the conflicts wait in the devices' queues rather than evaporating.
+ */
+async function fileConflict(
+  supabase: Supabase,
+  event: Extract<QueuedEvent, { kind: "shift-in" | "shift-out" }>,
+  at: string,
+  memberName: string,
+  reason: string,
+): Promise<Omit<SyncOutcome, "id">> {
+  const { error } = await supabase.from("signin_conflicts").insert({
+    member_id: event.memberId,
+    member_name: memberName,
+    kind: event.kind,
+    tapped_at: at,
+    via: event.via === "phone" ? "phone" : "kiosk",
+    reason,
+    event_id: event.id,
+  });
+
+  // Already filed by an earlier replay whose response never reached the device.
+  if (error && !isUniqueViolation(error)) {
+    console.error("[offline-sync] couldn't file conflict", error);
+    return { status: "retry", reason: "Couldn't file this for an officer." };
+  }
+  return { status: "conflict", reason };
 }
 
 async function applyShiftOut(
@@ -262,7 +355,33 @@ async function applyShiftOut(
     return { status: "applied" };
   }
 
-  return { status: "duplicate" };
+  // A shift already closed at this exact moment is this same event, replayed
+  // because its response never made it back to the device. Genuinely a
+  // duplicate — and worth separating out before the check below, which would
+  // otherwise report every lost response as a conflict.
+  const tapAt = Date.parse(at);
+  const { data: alreadyClosed } = await supabase
+    .from("shifts")
+    .select("id")
+    .eq("member_id", event.memberId)
+    .gte("signed_out_at", new Date(tapAt - SAME_SIGNOUT_MS).toISOString())
+    .lte("signed_out_at", new Date(tapAt + SAME_SIGNOUT_MS).toISOString())
+    .limit(1)
+    .maybeSingle();
+  if (alreadyClosed) return { status: "duplicate" };
+
+  // Nothing to close and nothing that looks like this tap: the device was
+  // showing someone as signed in who, as far as the studio is concerned, never
+  // was. Writing a sign-out with no sign-in would put a half-row in the sheet.
+  return fileConflict(
+    supabase,
+    event,
+    at,
+    check.name,
+    `Tapped to sign out at ${formatStudioClock(
+      at,
+    )}, but the studio has no open shift for them — the matching sign-in never arrived. Nothing was recorded.`,
+  );
 }
 
 /**

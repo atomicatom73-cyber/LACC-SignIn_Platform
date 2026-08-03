@@ -29,12 +29,24 @@ const MAX_ATTEMPTS = 8;
 export type FlushResult = {
   applied: number;
   duplicate: number;
+  /**
+   * Taps the studio's record contradicted. Nothing was written and an officer
+   * has been handed the details — see `SyncStatus`. Counted apart from
+   * duplicates because these are the ones somebody still has to act on.
+   */
+  conflict: number;
   rejected: number;
   /** Still queued — either offline, or waiting on the next attempt. */
   remaining: number;
 };
 
-const EMPTY: FlushResult = { applied: 0, duplicate: 0, rejected: 0, remaining: 0 };
+const EMPTY: FlushResult = {
+  applied: 0,
+  duplicate: 0,
+  conflict: 0,
+  rejected: 0,
+  remaining: 0,
+};
 
 let inFlight: Promise<FlushResult> | null = null;
 
@@ -94,8 +106,11 @@ async function drain(): Promise<FlushResult> {
         });
         continue;
       }
+      // Applied, duplicate, and conflict are all settled server-side: none of
+      // them will change on a retry, so the device lets them go.
       done.push(event.id);
       if (outcome.status === "applied") total.applied++;
+      else if (outcome.status === "conflict") total.conflict++;
       else total.duplicate++;
     }
 

@@ -324,7 +324,9 @@ async function drainQueue() {
         rejected: outcome.reason || "The server wouldn't accept it.",
       });
     } else {
-      // applied or duplicate — on record either way.
+      // applied, duplicate, or conflict — settled server-side either way. A
+      // conflict wrote nothing and was handed to an officer, so retrying it
+      // here would only file it again.
       done.push(event.id);
     }
   }

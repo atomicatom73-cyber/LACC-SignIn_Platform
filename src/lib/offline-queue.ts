@@ -100,6 +100,15 @@ export type SyncStatus =
   | "applied"
   /** Already on record from an earlier attempt — nothing left to do. */
   | "duplicate"
+  /**
+   * The studio's record contradicts the direction this tap asked for, and the
+   * device that took it was too out of date to be believed over the database —
+   * someone tapped "sign in" on a stale card while already signed in elsewhere.
+   * Applying it either way would write a guess into the log, so the sync files
+   * it for an officer instead. Settled server-side: the client drops it like a
+   * duplicate rather than retrying.
+   */
+  | "conflict"
   /** Refused for good; retrying can't help. The client stops and surfaces it. */
   | "rejected"
   /** Failed for a reason that might not repeat. The client keeps it and retries. */

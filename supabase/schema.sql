@@ -182,6 +182,45 @@ alter table public.student_signins add constraint student_signins_session_type_c
 create index if not exists student_signins_time_idx
   on public.student_signins (signed_in_at);
 
+-- A queued tap the studio's record contradicts, held back for a human.
+--
+-- An offline device cannot know what happened on any other device — its cards
+-- are as old as the last time it had signal. Someone who signed in on their
+-- phone can walk up to an offline tablet still reading "Tap to sign in" and,
+-- meaning to go home, queue a sign-*in*. Rather than guess (and write fiction
+-- into the log sheet), the sync refuses the tap and files it here for an
+-- officer to settle on /officer/logs.
+create table if not exists public.signin_conflicts (
+  id          uuid primary key default gen_random_uuid(),
+  -- Null once the member is deleted; member_name keeps the row readable.
+  member_id   uuid references public.members (id) on delete set null,
+  member_name text not null,
+  kind        text not null,
+  -- The moment of the tap, not the moment it synced — the time an officer
+  -- needs in order to correct the day.
+  tapped_at   timestamptz not null,
+  via         text not null,
+  reason      text not null,
+  -- The queued event's id. Unique, so replaying the same event after a lost
+  -- response can never file the same conflict twice.
+  event_id    uuid not null,
+  resolved_at timestamptz,
+  resolved_by uuid references public.members (id) on delete set null,
+  created_at  timestamptz not null default now()
+);
+
+alter table public.signin_conflicts
+  drop constraint if exists signin_conflicts_kind_check;
+alter table public.signin_conflicts add constraint signin_conflicts_kind_check
+  check (kind in ('shift-in', 'shift-out'));
+
+create unique index if not exists signin_conflicts_event_idx
+  on public.signin_conflicts (event_id);
+
+create index if not exists signin_conflicts_open_idx
+  on public.signin_conflicts (tapped_at desc)
+  where resolved_at is null;
+
 -- ---------------------------------------------------------------------------
 -- Chores
 -- ---------------------------------------------------------------------------
@@ -737,6 +776,7 @@ alter table public.members            enable row level security;
 alter table public.shifts             enable row level security;
 alter table public.guest_signins      enable row level security;
 alter table public.student_signins    enable row level security;
+alter table public.signin_conflicts   enable row level security;
 alter table public.chores             enable row level security;
 alter table public.chore_assignments  enable row level security;
 alter table public.chore_credits      enable row level security;
@@ -865,6 +905,21 @@ create policy "absences manage officers"
   on public.absences for all
   using (public.has_permission('jobs'))
   with check (public.has_permission('jobs'));
+
+-- signin_conflicts --------------------------------------------------------
+-- The sync files these with the service role, which bypasses RLS — there is
+-- deliberately no insert policy, so nothing client-side can invent one.
+
+drop policy if exists "signin conflicts read" on public.signin_conflicts;
+create policy "signin conflicts read"
+  on public.signin_conflicts for select
+  using (public.has_permission('logs'));
+
+drop policy if exists "signin conflicts resolve" on public.signin_conflicts;
+create policy "signin conflicts resolve"
+  on public.signin_conflicts for update
+  using (public.has_permission('logs'))
+  with check (public.has_permission('logs'));
 
 -- job_notes ---------------------------------------------------------------
 -- Deliberately NOT visible to the president or the other officers — the studio

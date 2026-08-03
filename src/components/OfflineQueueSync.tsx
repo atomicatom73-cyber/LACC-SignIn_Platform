@@ -10,6 +10,7 @@ import {
   subscribeToQueue,
   type StoredEvent,
 } from "@/lib/offline-queue";
+import { lastCheckedLabel, useConnection } from "@/lib/connectivity";
 import { flushQueue } from "@/lib/offline-sync";
 
 /**
@@ -22,9 +23,15 @@ import { flushQueue } from "@/lib/offline-sync";
  * report, which is nearly always.
  */
 export function OfflineQueueSync() {
-  const { pending, rejected, online } = useOfflineQueue();
+  const { pending, rejected } = useOfflineQueue();
+  // Judged by whether the studio answers, not by `navigator.onLine` — see
+  // lib/connectivity. The banner is the one place that difference is visible
+  // to everyone, on every screen.
+  const { offline, lastCheckedAt } = useConnection();
   const pathname = usePathname();
   const [dismissed, setDismissed] = useState(false);
+  const [conflicts, setConflicts] = useState(0);
+  const [conflictsSeen, setConflictsSeen] = useState(false);
 
   // "this tablet" is right at the kiosk and wrong on someone's phone. Trust the
   // queued taps first, since they record which surface took them, and fall back
@@ -35,9 +42,19 @@ export function OfflineQueueSync() {
   // — an iPad that has been asleep fires `visibilitychange`, not `online`.
   useEffect(() => {
     const run = () => {
-      flushQueue().catch(() => {
-        // Nothing to do: failures are already recorded on the queued events.
-      });
+      flushQueue()
+        .then((result) => {
+          // A tap the studio's record contradicted. It wasn't written and an
+          // officer has the details — say so, or the person who made it walks
+          // away thinking it went through.
+          if (result.conflict > 0) {
+            setConflicts((n) => n + result.conflict);
+            setConflictsSeen(false);
+          }
+        })
+        .catch(() => {
+          // Nothing to do: failures are already recorded on the queued events.
+        });
     };
     const onVisible = () => {
       if (document.visibilityState === "visible") run();
@@ -113,11 +130,37 @@ export function OfflineQueueSync() {
     );
   }
 
-  if (!online) {
+  if (conflicts > 0 && !conflictsSeen) {
+    return (
+      <Banner tone="danger">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold">
+            {conflicts === 1
+              ? "1 sign-in didn't match the studio's record"
+              : `${conflicts} sign-ins didn't match the studio's record`}
+          </div>
+          <div className="mt-0.5 text-xs opacity-90">
+            Saved here while offline, but the studio already had something
+            different. Nothing was changed — an officer has been sent the
+            details to sort out.
+          </div>
+        </div>
+        <button
+          onClick={() => setConflictsSeen(true)}
+          className="shrink-0 self-start rounded-lg px-2 py-1 text-xs font-semibold underline underline-offset-2"
+        >
+          OK
+        </button>
+      </Banner>
+    );
+  }
+
+  if (offline) {
     // Away from a sign-in screen an offline notice is just noise — nothing there
     // is queueing anything.
     const onSignInScreen = pathname.startsWith("/kiosk") || pathname === "/me";
     if (!waiting && !onSignInScreen) return null;
+    const checked = lastCheckedLabel(lastCheckedAt);
     return (
       <Banner tone="accent">
         <span className="text-sm font-semibold">
@@ -128,6 +171,12 @@ export function OfflineQueueSync() {
             : "Offline · sign-ins will be saved here"}
         </span>
         <span className="text-xs opacity-90">
+          {/* What this screen shows is frozen at that moment, which is the
+              part that actually bites: someone may have signed in or out on
+              another device since. */}
+          {checked
+            ? `Last reached the studio at ${checked}. `
+            : "Haven't reached the studio since this page opened. "}
           They&apos;ll upload on their own once you&apos;re back online.
         </span>
       </Banner>
@@ -211,9 +260,6 @@ function Banner({
 export function useOfflineQueue() {
   const [pending, setPending] = useState<StoredEvent[]>([]);
   const [rejected, setRejected] = useState<StoredEvent[]>([]);
-  // Starts optimistic so the server render and first client render agree; the
-  // effect below corrects it.
-  const [online, setOnline] = useState(true);
 
   const refresh = useCallback(async () => {
     const all = await readQueue();
@@ -227,23 +273,12 @@ export function useOfflineQueue() {
       refresh();
     });
 
-    const sync = () => setOnline(navigator.onLine);
-    window.addEventListener("online", sync);
-    window.addEventListener("offline", sync);
+    // Take the first read off the synchronous effect path, so the first client
+    // render still matches the server's and hydration stays clean.
+    queueMicrotask(refresh);
 
-    // Take the first reading off the synchronous effect path, so the first
-    // client render still matches the server's and hydration stays clean.
-    queueMicrotask(() => {
-      refresh();
-      sync();
-    });
-
-    return () => {
-      unsubscribe();
-      window.removeEventListener("online", sync);
-      window.removeEventListener("offline", sync);
-    };
+    return unsubscribe;
   }, [refresh]);
 
-  return { pending, rejected, online, refresh };
+  return { pending, rejected, refresh };
 }
