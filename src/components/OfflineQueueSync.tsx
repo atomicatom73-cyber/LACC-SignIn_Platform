@@ -6,6 +6,7 @@ import {
   dropEvents,
   eventSubject,
   readQueue,
+  requestBackgroundSync,
   subscribeToQueue,
   type StoredEvent,
 } from "@/lib/offline-queue";
@@ -41,13 +42,25 @@ export function OfflineQueueSync() {
     const onVisible = () => {
       if (document.visibilityState === "visible") run();
     };
+    // A phone going into a pocket is how a queued tap gets stranded: the page
+    // stops running and nothing retries until someone opens the app again.
+    // Take one more shot on the way out and leave Background Sync holding the
+    // rest. A request cut off mid-flight is safe — every event replays.
+    const onLeaving = () => {
+      void requestBackgroundSync();
+      run();
+    };
 
     run();
     window.addEventListener("online", run);
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pagehide", onLeaving);
+    document.addEventListener("freeze", onLeaving);
     return () => {
       window.removeEventListener("online", run);
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pagehide", onLeaving);
+      document.removeEventListener("freeze", onLeaving);
     };
   }, []);
 

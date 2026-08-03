@@ -26,6 +26,8 @@ const DB_NAME = "lacc-offline";
 const DB_VERSION = 1;
 const STORE = "events";
 const SKEW_KEY = "lacc.clockSkewMs";
+/** Background Sync tag. Must match the one public/sw.js listens for. */
+const QUEUE_SYNC_TAG = "lacc-offline-queue";
 /** Queued events older than this are dropped unsynced rather than replayed. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -282,8 +284,42 @@ export async function enqueue(event: QueuedEvent): Promise<boolean> {
   const stored: StoredEvent = { ...event, attempts: 0 };
   const ok = await tx("readwrite", (store) => store.put(stored));
   notify();
+  // Hand the browser a way to finish this without us. Not awaited: the caller
+  // is a finger on a screen, and `serviceWorker.ready` never settles at all on
+  // a page with no worker registered.
+  if (ok !== null) void requestBackgroundSync();
   // `put` resolves to the key, so a non-null result means it landed.
   return ok !== null;
+}
+
+/**
+ * Ask the browser to drain the queue for us once there's a connection — even
+ * with every tab closed.
+ *
+ * This covers the one gap the in-page retry loop can't: a member taps "clock
+ * in" on their phone with no signal, the phone goes into a pocket, and nothing
+ * runs again until they next open the app. Until it syncs, that shift doesn't
+ * exist as far as the studio tablet is concerned, and tapping their name there
+ * to go home signs them *in* instead.
+ *
+ * Chrome and Edge only. Safari has no Background Sync, which means every iPhone
+ * and the studio iPad — there this is a no-op and the page-open retries are
+ * still the whole story. That's why a waiting tap is also said out loud on the
+ * sign-in screens rather than being left to sort itself out.
+ */
+export async function requestBackgroundSync(): Promise<void> {
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+      return;
+    }
+    const registration = (await navigator.serviceWorker.ready) as
+      ServiceWorkerRegistration & {
+        sync?: { register(tag: string): Promise<void> };
+      };
+    await registration.sync?.register(QUEUE_SYNC_TAG);
+  } catch {
+    // Unsupported, or the user has background sync switched off for the site.
+  }
 }
 
 /** Everything still waiting, oldest tap first — the order the sync replays in. */

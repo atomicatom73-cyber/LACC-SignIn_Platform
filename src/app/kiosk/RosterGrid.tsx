@@ -2,6 +2,7 @@
 
 import { useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatDuration } from "@/lib/time";
 import { PasswordInput } from "@/components/PasswordInput";
 import { useOfflineQueue } from "@/components/OfflineQueueSync";
@@ -17,10 +18,24 @@ import { applyQueuedShifts, type RosterMember } from "./queued-roster";
 
 export type { RosterMember };
 
+/**
+ * How often the tablet re-asks the server who's in the studio.
+ *
+ * Nothing pushes a sign-in from someone's phone to this tablet, and the kiosk
+ * screen is left open all day — so without a poll these cards drift as far out
+ * of date as the last time anybody touched them. That gap is what sends someone
+ * to a card reading "Tap to sign in" when they're already signed in and only
+ * want to go home.
+ */
+const ROSTER_POLL_MS = 20_000;
+
+type Toast = { text: string; ms: number };
+
 export function RosterGrid({ members }: { members: RosterMember[] }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
   const [query, setQuery] = useState("");
   const [accountFor, setAccountFor] = useState<RosterMember | null>(null);
   const [pinFor, setPinFor] = useState<RosterMember | null>(null);
@@ -52,6 +67,44 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
     m.full_name.toLowerCase().includes(query.trim().toLowerCase()),
   );
 
+  function say(text: string, ms = 2500) {
+    setToast({ text, ms });
+  }
+
+  // Re-ask the server on a slow loop, so a sign-in from someone's phone reaches
+  // these cards without anyone reloading the tablet. Held off while a tap is in
+  // flight or a dialog is open — see the effect below.
+  const interacting = pending || pinFor !== null || accountFor !== null;
+  const interactingRef = useRef(false);
+  useEffect(() => {
+    interactingRef.current = interacting;
+  }, [interacting]);
+
+  useEffect(() => {
+    const sync = () => {
+      // Mid-tap the grid would reshuffle under a finger, and a hidden tab has
+      // nobody to show it to. Offline, a failed RSC fetch turns into a full
+      // browser navigation — and the queue overlay already covers this tablet's
+      // own taps, which are the only ones it can know about while cut off.
+      if (document.visibilityState !== "visible") return;
+      if (interactingRef.current || isOffline()) return;
+      router.refresh();
+    };
+
+    const id = setInterval(sync, ROSTER_POLL_MS);
+    const onVisible = () => {
+      // A tablet waking from sleep is the longest gap of all.
+      if (document.visibilityState === "visible") sync();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", sync);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", sync);
+    };
+  }, [router]);
+
   /**
    * Save a tap on the tablet for later. Keeps the direction the card was
    * showing, so a replay can't flip someone the wrong way, and stamps the
@@ -80,9 +133,9 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
     if (!saved) {
       // No network *and* no storage to fall back on: say so plainly instead of
       // showing a checkmark for something that is about to be lost.
-      setToast("Can't reach the studio and can't save here — use paper. ✍️");
+      say("Can't reach the studio and can't save here — use paper. ✍️", 5000);
     } else {
-      setToast(
+      say(
         goingIn
           ? `Saved on the tablet — welcome, ${first}! 👋`
           : `Saved on the tablet — see you, ${first}! ✌️`,
@@ -101,7 +154,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
       setPin("");
       pinInputRef.current?.focus();
     } else {
-      setToast(message);
+      say(message, 5000);
     }
   }
 
@@ -126,9 +179,21 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
           return;
         }
         const first = res.name.split(" ")[0];
-        setToast(
-          res.nowIn ? `Welcome, ${first}! 👋` : `See you, ${first}! ✌️`,
-        );
+        // The server flips the real shift, not the one this card was showing.
+        // When the two disagree — someone signed in on their phone since the
+        // last refresh — say so instead of leaving a bare "See you" under a
+        // card that read "Tap to sign in". That contradiction is what makes
+        // people tap a second time, which signs them right back in.
+        if (res.nowIn === goingIn) {
+          say(res.nowIn ? `Welcome, ${first}! 👋` : `See you, ${first}! ✌️`);
+        } else {
+          say(
+            res.nowIn
+              ? `You weren't signed in yet — now you are. Welcome, ${first}! 👋`
+              : `You were already signed in — signed you out. See you, ${first}! ✌️`,
+            5000,
+          );
+        }
         setPinFor(null);
         setPin("");
         setPinError(null);
@@ -169,7 +234,7 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
 
   useEffect(() => {
     if (!toast) return;
-    const id = setTimeout(() => setToast(null), 2500);
+    const id = setTimeout(() => setToast(null), toast.ms);
     return () => clearTimeout(id);
   }, [toast]);
 
@@ -306,8 +371,8 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
         className="pointer-events-none fixed inset-x-0 bottom-[max(2rem,env(safe-area-inset-bottom))] z-50 flex justify-center px-4"
       >
         {toast && (
-          <div className="rounded-full bg-foreground px-6 py-3 text-lg font-semibold text-background shadow-lg">
-            {toast}
+          <div className="max-w-md rounded-3xl bg-foreground px-6 py-3 text-center text-lg font-semibold text-background shadow-lg">
+            {toast.text}
           </div>
         )}
       </div>

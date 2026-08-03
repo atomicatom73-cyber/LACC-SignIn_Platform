@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requestSigninLogExport } from "@/lib/signin-log-sheet";
+import { studioDayKey } from "@/lib/studio";
 import {
   SYNC_BATCH_LIMIT,
   type QueuedEvent,
@@ -138,11 +139,76 @@ async function applyShiftIn(
   });
 
   if (error) {
-    // `shifts_one_open_per_member` — they're already signed in, which is the
-    // state this event was asking for.
-    if (isUniqueViolation(error)) return { status: "duplicate" };
+    // `shifts_one_open_per_member` — some other shift is already open for this
+    // member. That is NOT the same as this event having landed.
+    if (isUniqueViolation(error)) return reconcileOpenShift(supabase, event, at);
     throw new Error(error.message);
   }
+  return { status: "applied" };
+}
+
+/**
+ * Settle a queued arrival that collided with an already-open shift.
+ *
+ * Only one shift per member may be open at a time, so the insert lost — but the
+ * open row is not necessarily this event. The usual way the two meet: a member
+ * taps in on their phone with no signal, the tap sits in the phone's queue, and
+ * hours later they walk to the tablet to leave. The tablet asks the database,
+ * sees nobody signed in, and opens a *second* shift stamped with the moment
+ * they were trying to go home. Calling that a duplicate is how the real arrival
+ * time used to disappear — silently, with the member left clocked in.
+ *
+ * So when the open shift started *after* this tap, the tap is the true start
+ * and the open row is moved back to it. Same studio day only: stretching a
+ * shift across midnight puts it back within reach of `close_stale_shifts()`,
+ * which would stamp it 23:59:59 of the earlier day — an end time already in the
+ * past while the member is still standing in the studio.
+ */
+async function reconcileOpenShift(
+  supabase: Supabase,
+  event: Extract<QueuedEvent, { kind: "shift-in" }>,
+  at: string,
+): Promise<Omit<SyncOutcome, "id">> {
+  // The insert can also lose to its own primary key, if a concurrent replay of
+  // this very event landed first. That one really is a duplicate.
+  const { data: sameEvent } = await supabase
+    .from("shifts")
+    .select("id")
+    .eq("id", event.id)
+    .maybeSingle();
+  if (sameEvent) return { status: "duplicate" };
+
+  const { data: openShift } = await supabase
+    .from("shifts")
+    .select("id, signed_in_at")
+    .eq("member_id", event.memberId)
+    .is("signed_out_at", null)
+    .maybeSingle();
+  // Closed between the failed insert and this read — a clean retry can insert.
+  if (!openShift) {
+    return { status: "retry", reason: "The shift closed mid-sync." };
+  }
+
+  if (
+    Date.parse(at) >= Date.parse(openShift.signed_in_at) ||
+    studioDayKey(at) !== studioDayKey(openShift.signed_in_at)
+  ) {
+    // They were already signed in when this tap happened (or it belongs to an
+    // earlier day and is no longer safe to merge): the state it asked for holds.
+    return { status: "duplicate" };
+  }
+
+  // Move the open shift back to the real arrival, and with it the surface that
+  // arrival actually came from — the officer log reads `source` to tell a phone
+  // sign-in from a tablet one.
+  const { error } = await supabase
+    .from("shifts")
+    .update({
+      signed_in_at: at,
+      source: event.via === "phone" ? "phone" : "kiosk",
+    })
+    .eq("id", openShift.id);
+  if (error) throw new Error(error.message);
   return { status: "applied" };
 }
 

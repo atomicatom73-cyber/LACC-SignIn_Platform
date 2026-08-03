@@ -28,10 +28,14 @@
  * `/me/door-codes`, `/me/inbox`, `/me/account` and everything under `/officer`
  * are never stored at all.
  *
+ * It also answers Background Sync, so a phone that queued a sign-in and went
+ * straight into a pocket still gets it into the log without the app being
+ * reopened. See the `sync` handler at the bottom.
+ *
  * Bump CACHE_VERSION to evict everything on the next deploy.
  */
 
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 const SHELL_CACHE = `lacc-shell-${CACHE_VERSION}`;
 const STATIC_CACHE = `lacc-static-${CACHE_VERSION}`;
 const PRIVATE_CACHE = `lacc-private-${CACHE_VERSION}`;
@@ -257,6 +261,173 @@ async function pruneStaticCache(cache) {
   // chunks from builds this tablet no longer runs.
   const stale = keys.slice(0, keys.length - STATIC_CACHE_LIMIT);
   await Promise.all(stale.map((key) => cache.delete(key)));
+}
+
+// ---------------------------------------------------------------------------
+// Background Sync
+//
+// The page drains the queue whenever it's open (src/lib/offline-sync.ts). This
+// is the same job for when it isn't: a member taps "clock in" on their phone
+// with no signal and pockets it, and nothing else runs until they reopen the
+// app — meanwhile the studio tablet has no idea they're here, and tapping their
+// name there to go home opens a *second* shift instead of closing this one.
+//
+// Chrome and Edge only; Safari never fires `sync`, so on iPhones and the studio
+// iPad the in-page retries remain the whole story.
+//
+// The store layout below mirrors src/lib/offline-queue.ts — keep the two in
+// step, especially DB_VERSION.
+// ---------------------------------------------------------------------------
+
+const QUEUE_SYNC_TAG = "lacc-offline-queue";
+const QUEUE_DB = "lacc-offline";
+const QUEUE_DB_VERSION = 1;
+const QUEUE_STORE = "events";
+const QUEUE_ENDPOINT = "/api/offline-sync";
+/** Matches SYNC_BATCH_LIMIT — one call's worth of replay. */
+const QUEUE_BATCH_LIMIT = 100;
+
+self.addEventListener("sync", (event) => {
+  if (event.tag !== QUEUE_SYNC_TAG) return;
+  // Rejecting asks the browser to wake us again on the next connection, so a
+  // failure here costs a retry rather than the sign-in.
+  event.waitUntil(drainQueue());
+});
+
+async function drainQueue() {
+  const queued = await readQueuedEvents();
+  if (queued.length === 0) return;
+
+  const batch = queued.slice(0, QUEUE_BATCH_LIMIT);
+  const response = await fetch(QUEUE_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // Same-origin, so the member's session cookie travels with it — that's what
+    // proves a `phone` event was really theirs.
+    body: JSON.stringify({ events: batch.map(stripLocalFields) }),
+  });
+  if (!response.ok) throw new Error(`Offline sync failed: ${response.status}`);
+
+  const { outcomes } = await response.json();
+  const byId = new Map((outcomes || []).map((o) => [o.id, o]));
+
+  const done = [];
+  const refused = [];
+  let unresolved = 0;
+  for (const event of batch) {
+    const outcome = byId.get(event.id);
+    if (!outcome || outcome.status === "retry") {
+      unresolved++;
+    } else if (outcome.status === "rejected") {
+      refused.push({
+        ...event,
+        rejected: outcome.reason || "The server wouldn't accept it.",
+      });
+    } else {
+      // applied or duplicate — on record either way.
+      done.push(event.id);
+    }
+  }
+
+  await writeQueueResults(done, refused);
+  // Anything left needs another pass: more than one batch, or events the server
+  // wants retried. Throwing re-arms the sync rather than dropping them.
+  if (unresolved > 0 || queued.length > batch.length) {
+    throw new Error("Offline queue not fully drained");
+  }
+}
+
+/** Strip the page's local bookkeeping — the server only needs the event. */
+function stripLocalFields(event) {
+  const payload = { ...event };
+  delete payload.attempts;
+  delete payload.lastError;
+  delete payload.rejected;
+  return payload;
+}
+
+function openQueueDb() {
+  return new Promise((resolve) => {
+    let request;
+    try {
+      request = indexedDB.open(QUEUE_DB, QUEUE_DB_VERSION);
+    } catch {
+      resolve(null);
+      return;
+    }
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(QUEUE_STORE)) {
+        db.createObjectStore(QUEUE_STORE, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+    request.onblocked = () => resolve(null);
+  });
+}
+
+/** Everything still waiting, oldest tap first — the order the server replays in. */
+async function readQueuedEvents() {
+  const db = await openQueueDb();
+  if (!db) return [];
+  return new Promise((resolve) => {
+    try {
+      const transaction = db.transaction(QUEUE_STORE, "readonly");
+      const request = transaction.objectStore(QUEUE_STORE).getAll();
+      transaction.oncomplete = () => {
+        db.close();
+        const all = request.result || [];
+        resolve(
+          all
+            // Events already refused for good are the page's to show and clear.
+            .filter((event) => !event.rejected)
+            .sort((a, b) => String(a.at).localeCompare(String(b.at))),
+        );
+      };
+      transaction.onerror = () => {
+        db.close();
+        resolve([]);
+      };
+      transaction.onabort = () => {
+        db.close();
+        resolve([]);
+      };
+    } catch {
+      db.close();
+      resolve([]);
+    }
+  });
+}
+
+/** Drop what landed; flag what was refused so the page can surface it. */
+async function writeQueueResults(doneIds, refusedEvents) {
+  if (doneIds.length === 0 && refusedEvents.length === 0) return;
+  const db = await openQueueDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const transaction = db.transaction(QUEUE_STORE, "readwrite");
+      const store = transaction.objectStore(QUEUE_STORE);
+      for (const id of doneIds) store.delete(id);
+      for (const event of refusedEvents) store.put(event);
+      transaction.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      transaction.onerror = () => {
+        db.close();
+        resolve();
+      };
+      transaction.onabort = () => {
+        db.close();
+        resolve();
+      };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
 }
 
 /** Last resort: never show the browser's dinosaur on a studio kiosk. */

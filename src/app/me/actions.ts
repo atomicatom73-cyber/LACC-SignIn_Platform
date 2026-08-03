@@ -33,10 +33,14 @@ export async function toggleShift() {
 
   if (openShift) {
     const now = new Date().toISOString();
-    await supabase
+    const { error } = await supabase
       .from("shifts")
       .update({ signed_out_at: now })
       .eq("id", openShift.id);
+    // Thrown rather than swallowed: ClockCard turns a throw into "the studio's
+    // system had a problem", which beats a button that quietly does nothing and
+    // leaves someone believing they clocked out.
+    if (error) throw new Error(error.message);
     // Guests leave with their host. Service role: members can't update
     // guest_signins rows under RLS.
     await createAdminClient()
@@ -46,9 +50,12 @@ export async function toggleShift() {
       .is("signed_out_at", null)
       .gte("signed_in_at", openShift.signed_in_at);
   } else {
-    await supabase
+    const { error } = await supabase
       .from("shifts")
       .insert({ member_id: member.id, source: "phone" });
+    // `shifts_one_open_per_member` — the kiosk, or a queued tap syncing just
+    // now, opened one first. They're clocked in, which is what the tap wanted.
+    if (error && error.code !== "23505") throw new Error(error.message);
   }
 
   revalidatePath("/me");

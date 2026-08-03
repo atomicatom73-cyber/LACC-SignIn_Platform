@@ -42,10 +42,15 @@ export async function toggleKioskShift(
 
   if (openShift) {
     const now = new Date().toISOString();
-    await supabase
+    const { error: signOutErr } = await supabase
       .from("shifts")
       .update({ signed_out_at: now })
       .eq("id", openShift.id);
+    // Never report a sign-out that didn't happen: someone who walks away
+    // believing they're clocked out is the failure that costs them hours.
+    if (signOutErr) {
+      return { error: "That didn't save — please try again." };
+    }
     // Guests come in with their host, so they leave with them too — close any
     // guest rows from this shift so the logs show an out time.
     await supabase
@@ -59,12 +64,22 @@ export async function toggleKioskShift(
     return { nowIn: false, name: member.full_name };
   }
 
-  await supabase
+  const { error: signInErr } = await supabase
     .from("shifts")
     .insert({ member_id: memberId, source: "kiosk" });
+  // `shifts_one_open_per_member` means a shift opened between the read above
+  // and this insert — their phone's queue draining, or a tap on another screen.
+  // They're signed in either way, which is what this tap asked for.
+  if (signInErr && !isUniqueViolation(signInErr)) {
+    return { error: "That didn't save — please try again." };
+  }
   revalidatePath("/kiosk");
   after(requestSigninLogExport);
   return { nowIn: true, name: member.full_name };
+}
+
+function isUniqueViolation(error: { code?: string }): boolean {
+  return error.code === "23505";
 }
 
 export type SignInFormState =
