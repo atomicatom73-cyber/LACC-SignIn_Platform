@@ -5,7 +5,12 @@ import { after } from "next/server";
 import { requireOfficer } from "@/lib/auth";
 import { hasPermission, memberLoginEmail } from "@/lib/roles";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requestMembersSheetSync } from "@/lib/members-sheet";
+import {
+  listRosterTabs,
+  requestMembersSheetSync,
+  setSelectedRosterTab,
+  syncMembersSheetNow,
+} from "@/lib/members-sheet";
 import { monthLabel } from "@/lib/studio";
 
 /** Result shape shared by the useActionState forms on this page. */
@@ -424,4 +429,56 @@ export async function addMember(
   revalidatePath("/officer/members");
   after(requestMembersSheetSync);
   return { success: `${fullName} added to the roster.` };
+}
+
+/**
+ * Point the roster sync at a different tab of the board's sheet. The board
+ * opens a new tab each trimester, and the sync reads exactly one, so this is
+ * how the app is moved onto the current roster. Syncs immediately (skipping
+ * the page-load throttle) so the switch is visible on the next render.
+ */
+export async function chooseRosterTab(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  await requireOfficer("members");
+
+  const tab = String(formData.get("tab") ?? "").trim();
+  if (!tab) return { error: "Pick a tab." };
+
+  // Only a tab that's actually on the sheet — a stale dropdown shouldn't be
+  // able to park the roster on a name that no longer exists.
+  let tabs: string[];
+  try {
+    tabs = await listRosterTabs();
+  } catch (error) {
+    return {
+      error: `Couldn't read the sheet's tabs: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  if (!tabs.includes(tab)) {
+    return { error: `The sheet has no visible tab called "${tab}" any more.` };
+  }
+
+  await setSelectedRosterTab(tab);
+
+  let result;
+  try {
+    result = await syncMembersSheetNow();
+  } catch (error) {
+    revalidatePath("/officer/members");
+    return {
+      error: `Switched to "${tab}", but the sync failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+
+  revalidatePath("/officer/members");
+  revalidatePath("/kiosk");
+  return {
+    success: `Roster now follows “${tab}” — ${result.matched} matched, ${result.created} new.`,
+  };
 }

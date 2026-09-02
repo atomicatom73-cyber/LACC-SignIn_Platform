@@ -1,5 +1,6 @@
 import { requireOfficer } from "@/lib/auth";
 import {
+  listRosterTabs,
   membersSheetConfigured,
   membersSheetSyncStatus,
   syncMembersSheetThrottled,
@@ -9,6 +10,7 @@ import { formatStudioDateTime, monthKey } from "@/lib/studio";
 import type { Absence, ChoreCredit, Member } from "@/lib/types";
 import type { MemberSummary, ThisMonthChip } from "./MemberDetail";
 import { AddMemberForm } from "./AddMemberForm";
+import { RosterTabPicker } from "./RosterTabPicker";
 import { MembersList, type MemberGroup } from "./MembersList";
 
 export const dynamic = "force-dynamic";
@@ -183,6 +185,30 @@ export default async function OfficerMembersPage() {
     ? await membersSheetSyncStatus()
     : null;
 
+  // The tab list drives the picker and the "you're on the wrong roster" nudge.
+  // Every sync records it, so normally this costs nothing and is at most one
+  // throttle window stale — plenty fresh for something the board changes once
+  // a trimester. Only a status from before the picker shipped needs a live
+  // lookup, and a Google hiccup there just hides the picker.
+  const canManage = hasPermission(viewer, "members");
+  let rosterTabs: string[] = [];
+  if (syncStatus) {
+    rosterTabs = syncStatus.tabs ?? [];
+    if (rosterTabs.length === 0) {
+      try {
+        rosterTabs = await listRosterTabs();
+      } catch (err) {
+        console.error("[members] tab list failed:", err);
+      }
+    }
+  }
+  // Tabs to the RIGHT of the one in use are the ones worth flagging: the board
+  // files each new trimester as a new tab on the end, and last trimester's tab
+  // never goes away — so "any other tab" would nag forever and teach everyone
+  // to ignore it.
+  const currentTabIdx = syncStatus ? rosterTabs.indexOf(syncStatus.tab) : -1;
+  const newerTabs = currentTabIdx === -1 ? [] : rosterTabs.slice(currentTabIdx + 1);
+
   return (
     <main className="anim-fade">
       <h1 className="text-2xl font-bold tracking-tight">Members</h1>
@@ -190,7 +216,7 @@ export default async function OfficerMembersPage() {
         Roster, job credits, and absences.
       </p>
 
-      {hasPermission(viewer, "members") && (
+      {canManage && (
         <div className="mt-6">
           <AddMemberForm />
         </div>
@@ -207,6 +233,21 @@ export default async function OfficerMembersPage() {
             made in the app, and members added here, are written back to the
             sheet.
           </p>
+          {newerTabs.length > 0 && (
+            <p className="mt-2 text-sm font-medium text-accent">
+              Heads up: the sheet has a newer tab
+              {newerTabs.length === 1 ? " " : "s "}
+              {newerTabs.map((t) => `“${t}”`).join(", ")} after the one being
+              read. If the board started a new session there, switch to it
+              {canManage
+                ? " below"
+                : " — ask the president or vice president"}
+              , or the roster keeps mirroring the old one.
+            </p>
+          )}
+          {canManage && rosterTabs.length > 1 && (
+            <RosterTabPicker tabs={rosterTabs} current={syncStatus.tab} />
+          )}
           {syncStatus.flagged.length > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer text-xs font-medium text-muted">

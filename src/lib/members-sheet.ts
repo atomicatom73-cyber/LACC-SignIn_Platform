@@ -19,9 +19,12 @@
  * OAuth consent and no SDK.
  *
  * Sync rules (locked in with the user 2026-07-14; write-back 2026-07-15):
- * - Always reads (and writes) the FIRST visible tab — the board hasn't
- *   decided how new trimesters will be filed, so the officers page shows
- *   which tab was touched.
+ * - Reads (and writes) ONE tab, the one the officers picked on the members
+ *   page — the board opens a fresh tab each trimester, so the roster has to
+ *   be pointed at the current one. Until somebody picks, it's the leftmost
+ *   visible tab, as it always was. The page names the tab in use and says so
+ *   when the sheet holds others, because a sync quietly mirroring last
+ *   trimester looks exactly like a sync that is working.
  * - Sheet rows are matched to members by email first, then by the remembered
  *   sheet-row name (`sheet_name`), then by normalized full name. Unmatched
  *   rows become kiosk-only members (no account).
@@ -130,11 +133,36 @@ function cleanEmail(cell: string | undefined): string | null {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : null;
 }
 
-/** Read the first visible tab of the roster sheet. */
+/**
+ * The roster sheet's visible tabs, left to right. The board files each
+ * trimester as a new tab, so this is also the officers' menu of rosters.
+ */
+export async function listRosterTabs(): Promise<string[]> {
+  const meta = (await sheetsFetch(
+    "?fields=sheets(properties(sheetId,title,index,hidden))",
+  )) as {
+    sheets?: {
+      properties?: { sheetId?: number; title?: string; index?: number; hidden?: boolean };
+    }[];
+  };
+  return (meta.sheets ?? [])
+    .map((s) => s.properties ?? {})
+    .filter((p) => !p.hidden && p.title)
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+    .map((p) => p.title!);
+}
+
+/**
+ * Read the tab the officers chose, falling back to the leftmost visible one
+ * until somebody chooses (and again, loudly, if a chosen tab disappears —
+ * syncing the wrong roster in silence is how a whole trimester went stale).
+ */
 async function fetchSheet(): Promise<{
   tab: string;
   tabSheetId: number;
+  tabs: string[];
   grid: string[][];
+  flagged: string[];
 }> {
   const meta = (await sheetsFetch(
     "?fields=sheets(properties(sheetId,title,index,hidden))",
@@ -147,13 +175,29 @@ async function fetchSheet(): Promise<{
     .map((s) => s.properties ?? {})
     .filter((p) => !p.hidden && p.title)
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-  const tab = tabs[0]?.title;
-  if (!tab) throw new Error("The roster sheet has no visible tabs.");
+  if (tabs.length === 0) throw new Error("The roster sheet has no visible tabs.");
+
+  const flagged: string[] = [];
+  const chosen = await selectedRosterTab();
+  let picked = chosen ? tabs.find((p) => p.title === chosen) : undefined;
+  if (chosen && !picked) {
+    flagged.push(
+      `The chosen sheet tab "${chosen}" is gone (renamed or deleted) — read "${tabs[0].title}" instead. Pick the right tab on this page.`,
+    );
+  }
+  picked ??= tabs[0];
+  const tab = picked.title!;
 
   const values = (await sheetsFetch(
     `/values/${encodeURIComponent(`${a1Tab(tab)}!A1:Z`)}?majorDimension=ROWS`,
   )) as { values?: string[][] };
-  return { tab, tabSheetId: tabs[0]?.sheetId ?? 0, grid: values.values ?? [] };
+  return {
+    tab,
+    tabSheetId: picked.sheetId ?? 0,
+    tabs: tabs.map((p) => p.title!),
+    grid: values.values ?? [],
+    flagged,
+  };
 }
 
 /** Single-quote a tab title for an A1 range; literal quotes double up. */
@@ -489,6 +533,8 @@ export function reconcile(parsed: ParsedSheet, members: MemberRow[]): SyncPlan {
 
 export type MembersSheetSyncResult = {
   tab: string;
+  /** Every visible tab, left to right (absent on results from before the picker). */
+  tabs?: string[];
   totalRows: number;
   matched: number;
   created: number;
@@ -510,7 +556,7 @@ export async function syncMembersSheet(): Promise<MembersSheetSyncResult> {
   // watermark below tells requestMembersSheetSync whether an edit made it in.
   const dataAsOf = new Date().toISOString();
 
-  const { tab, tabSheetId, grid } = await fetchSheet();
+  const { tab, tabSheetId, tabs, grid, flagged: tabFlags } = await fetchSheet();
   const parsed = parseGrid(grid);
 
   const admin = createAdminClient();
@@ -522,7 +568,7 @@ export async function syncMembersSheet(): Promise<MembersSheetSyncResult> {
   if (membersError) throw new Error(`Members read failed: ${membersError.message}`);
 
   const plan = reconcile(parsed, (memberData ?? []) as MemberRow[]);
-  const flagged = [...parsed.flagged, ...plan.flagged];
+  const flagged = [...tabFlags, ...parsed.flagged, ...plan.flagged];
 
   let updated = 0;
   for (const { id, name, patch } of plan.memberPatches) {
@@ -655,6 +701,7 @@ export async function syncMembersSheet(): Promise<MembersSheetSyncResult> {
 
   const result: MembersSheetSyncResult = {
     tab,
+    tabs,
     totalRows: parsed.rows.length,
     matched: plan.matched,
     created,
@@ -679,6 +726,47 @@ export async function syncMembersSheet(): Promise<MembersSheetSyncResult> {
 
 /** Key for the sync marker row in `public.sync_state`. */
 const SYNC_STATE_KEY = "members_sheet";
+
+/** Key for the chosen-tab row — the sync's other piece of state. */
+const TAB_STATE_KEY = "members_sheet_tab";
+
+/**
+ * Which tab the officers pointed the roster at, or null while nobody has
+ * chosen (the leftmost visible tab, as it always was). The board opens a new
+ * tab each trimester, so this is what keeps the app on the current one.
+ */
+export async function selectedRosterTab(): Promise<string | null> {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("sync_state")
+    .select("detail")
+    .eq("key", TAB_STATE_KEY)
+    .maybeSingle();
+  const tab = (data?.detail as { tab?: unknown } | null)?.tab;
+  return typeof tab === "string" && tab ? tab : null;
+}
+
+/** Point the roster at a tab (null hands it back to the leftmost visible one). */
+export async function setSelectedRosterTab(tab: string | null): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await admin.from("sync_state").upsert(
+    {
+      key: TAB_STATE_KEY,
+      last_synced_at: new Date().toISOString(),
+      detail: tab ? { tab } : null,
+    },
+    { onConflict: "key" },
+  );
+  if (error) throw new Error(`Couldn't save the tab choice: ${error.message}`);
+}
+
+/**
+ * Sync right now, ignoring the page-load throttle — for the moment an officer
+ * switches tabs and wants to see the new roster, not wait out the window.
+ */
+export async function syncMembersSheetNow(): Promise<MembersSheetSyncResult> {
+  return runCoalesced();
+}
 
 // ---------------------------------------------------------------------------
 // Triggers
