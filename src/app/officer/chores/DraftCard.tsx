@@ -917,11 +917,19 @@ function ScheduledLine({
   onDragEnd: (commit: boolean) => void;
 }) {
   const [editingTime, setEditingTime] = useState(false);
-  const initial = entry.scheduledAt
-    ? studioDateTimeParts(entry.scheduledAt)
-    : { date: "", time: "" };
-  const [date, setDate] = useState(initial.date);
-  const [time, setTime] = useState(initial.time);
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+
+  // Seeded when the editor is opened, not once on mount: another officer may
+  // have changed this line since, and a draft can sit for weeks.
+  const openEditor = () => {
+    const parts = entry.scheduledAt
+      ? studioDateTimeParts(entry.scheduledAt)
+      : { date: "", time: "" };
+    setDate(parts.date);
+    setTime(parts.time);
+    setEditingTime(true);
+  };
 
   return (
     <div
@@ -1021,7 +1029,7 @@ function ScheduledLine({
               : "🗓 No time picked yet"}
           </span>
           <button
-            onClick={() => setEditingTime(true)}
+            onClick={openEditor}
             disabled={pending}
             className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] font-medium text-muted transition active:scale-[0.97] disabled:opacity-60"
           >
