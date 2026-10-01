@@ -33,6 +33,17 @@ export type BoardAssignee = {
   scheduledAt: string | null;
 };
 
+/**
+ * A line penciled into the month's draft — nobody has been told about it, and
+ * it's edited in the draft card above, not here.
+ */
+export type BoardPencil = {
+  entryId: string;
+  memberId: string | null;
+  memberName: string | null;
+  scheduledAt: string | null;
+};
+
 export type BoardChore = {
   id: string;
   name: string;
@@ -44,6 +55,7 @@ export type BoardChore = {
   /** Invites whoever holds it to pick a date and time. */
   schedulingEnabled: boolean;
   assignees: BoardAssignee[];
+  penciled: BoardPencil[];
 };
 
 export type PickerMember = {
@@ -76,6 +88,10 @@ export function ChoreBoard({
     .filter((c) => c.open > 0);
   const openSlots = unfilled.reduce((sum, c) => sum + c.open, 0);
 
+  // Penciled lines aren't assignments, so they don't close the gap — but
+  // saying how many are waiting stops the red banner looking like lost work.
+  const penciledTotal = chores.reduce((sum, c) => sum + c.penciled.length, 0);
+
   if (chores.length === 0) {
     return (
       <p className="text-sm text-muted">
@@ -94,6 +110,13 @@ export function ChoreBoard({
             {unfilled.length} job{unfilled.length === 1 ? "" : "s"}:
           </span>{" "}
           {unfilled.map((c) => `${c.name} (${c.open})`).join(", ")}
+          {penciledTotal > 0 && (
+            <span className="text-muted">
+              {" "}
+              — {penciledTotal} line{penciledTotal === 1 ? " is" : "s are"}{" "}
+              penciled into the draft above, waiting to be assigned.
+            </span>
+          )}
         </p>
       )}
       <div className="anim-stagger grid gap-4 sm:grid-cols-2">
@@ -310,6 +333,28 @@ function ChoreCard({
               );
             })}
           </ul>
+        )}
+
+        {/* Penciled into the draft but not assigned: shown so the card tells
+            the whole truth, greyed because nobody has been told. Edited in the
+            draft card above — one place to shuffle, so it can't drift. */}
+        {chore.penciled.length > 0 && (
+          <div className="mt-3 rounded-xl border border-dashed border-accent/40 bg-accent/5 px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-accent">
+              ✏️ Penciled — not assigned yet
+            </p>
+            <ul className="mt-1 flex flex-col gap-0.5">
+              {chore.penciled.map((p) => (
+                <li
+                  key={p.entryId}
+                  className="truncate text-xs text-muted"
+                >
+                  {p.memberName ?? "Nobody yet"}
+                  {p.scheduledAt && ` · ${formatStudioDateTime(p.scheduledAt)}`}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {!chore.paused && candidates.length > 0 && (

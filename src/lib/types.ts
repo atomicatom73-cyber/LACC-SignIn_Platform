@@ -62,6 +62,27 @@ export type ChoreAssignment = {
   created_at: string;
 };
 
+/** A month's penciled plan. The row existing means a draft is open. */
+export type ChoreDraft = {
+  month: string; // "YYYY-MM-01"
+  updated_by: string | null;
+  updated_at: string;
+  created_at: string;
+};
+
+/**
+ * One penciled line. `member_id` null is a slot with a time but nobody on it
+ * yet; `scheduled_at` null is a name with no time yet. Either may come first.
+ */
+export type ChoreDraftEntry = {
+  id: string;
+  month: string; // "YYYY-MM-01"
+  chore_id: string;
+  member_id: string | null;
+  scheduled_at: string | null;
+  created_at: string;
+};
+
 export type ChoreCredit = {
   id: string;
   member_id: string;

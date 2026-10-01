@@ -1,10 +1,15 @@
 import Link from "next/link";
 import { requireOfficer } from "@/lib/auth";
+import { deriveExemptions } from "@/lib/job-draft";
 import { addMonths, monthKey, monthLabel } from "@/lib/studio";
 import type { Chore } from "@/lib/types";
 import { AddJobForm } from "./AddJobForm";
 import { ChoreBoard, type BoardChore, type PickerMember } from "./ChoreBoard";
-import { ReshuffleCard } from "./ReshuffleCard";
+import {
+  DraftCard,
+  type DraftJob,
+  type PickerEntry,
+} from "./DraftCard";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +23,16 @@ type AssignmentRow = {
   members: { full_name: string } | null;
 };
 
-/** How many months ahead the reshuffle picker lets you plan. */
+/** Raw row shape for a penciled draft line. */
+type DraftEntryRow = {
+  id: string;
+  chore_id: string;
+  member_id: string | null;
+  scheduled_at: string | null;
+  members: { full_name: string } | null;
+};
+
+/** How many months ahead the planning picker lets you work. */
 const PLANNING_MONTHS = 12;
 
 export default async function OfficerChoresPage({
@@ -34,34 +48,52 @@ export default async function OfficerChoresPage({
     ? `${rawMonth}-01`
     : currentMonth;
 
-  const [choresRes, assignmentsRes, membersRes, absencesRes] =
-    await Promise.all([
-      supabase
-        .from("chores")
-        .select(
-          "id, name, description, slots, active, paused, interval, scheduling_enabled, created_at",
-        )
-        .order("name", { ascending: true }),
-      supabase
-        .from("chore_assignments")
-        // members!…: both member_id and assigned_by reference members, so the
-        // embed must name its FK or PostgREST rejects it as ambiguous.
-        .select(
-          "id, chore_id, member_id, status, scheduled_at, members!chore_assignments_member_id_fkey(full_name)",
-        )
-        .eq("month", month)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("members")
-        .select("id, full_name, officer_status, kiln_team")
-        .eq("role", "member")
-        .eq("active", true)
-        .order("full_name", { ascending: true }),
-      supabase
-        .from("absences")
-        .select("member_id, members!absences_member_id_fkey(full_name)")
-        .eq("month", month),
-    ]);
+  const [
+    choresRes,
+    assignmentsRes,
+    membersRes,
+    absencesRes,
+    draftRes,
+    draftEntriesRes,
+    creditsRes,
+  ] = await Promise.all([
+    supabase
+      .from("chores")
+      .select(
+        "id, name, description, slots, active, paused, interval, scheduling_enabled, created_at",
+      )
+      .order("name", { ascending: true }),
+    supabase
+      .from("chore_assignments")
+      // members!…: both member_id and assigned_by reference members, so the
+      // embed must name its FK or PostgREST rejects it as ambiguous.
+      .select(
+        "id, chore_id, member_id, status, scheduled_at, members!chore_assignments_member_id_fkey(full_name)",
+      )
+      .eq("month", month)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("members")
+      .select("id, full_name, officer_status, kiln_team")
+      .eq("role", "member")
+      .eq("active", true)
+      .order("full_name", { ascending: true }),
+    supabase
+      .from("absences")
+      .select("member_id, members!absences_member_id_fkey(full_name)")
+      .eq("month", month),
+    supabase
+      .from("chore_drafts")
+      .select("month, updated_at, members(full_name)")
+      .eq("month", month)
+      .maybeSingle(),
+    supabase
+      .from("chore_draft_entries")
+      .select("id, chore_id, member_id, scheduled_at, members(full_name)")
+      .eq("month", month)
+      .order("created_at", { ascending: true }),
+    supabase.from("chore_credits").select("member_id").is("used_month", null),
+  ]);
 
   const chores = (choresRes.data ?? []) as Chore[];
   const assignments = (assignmentsRes.data ?? []) as unknown as AssignmentRow[];
@@ -70,6 +102,16 @@ export default async function OfficerChoresPage({
     member_id: string;
     members: { full_name: string } | null;
   }[];
+  const draftRow = draftRes.data as unknown as {
+    month: string;
+    updated_at: string;
+    members: { full_name: string } | null;
+  } | null;
+  const draftEntries = (draftEntriesRes.data ??
+    []) as unknown as DraftEntryRow[];
+  const creditMemberIds = [
+    ...new Set((creditsRes.data ?? []).map((c) => c.member_id)),
+  ];
 
   const assigneesByChore = new Map<string, BoardChore["assignees"]>();
   for (const a of assignments) {
@@ -84,11 +126,29 @@ export default async function OfficerChoresPage({
     assigneesByChore.set(a.chore_id, list);
   }
 
+  // Penciled lines, grouped per job. These never leave the officer board:
+  // there's no RLS read policy for members, nothing is emailed, and the
+  // printable sheet reads assignments only.
+  const penciledByChore = new Map<string, BoardChore["penciled"]>();
+  for (const e of draftEntries) {
+    const list = penciledByChore.get(e.chore_id) ?? [];
+    list.push({
+      entryId: e.id,
+      memberId: e.member_id,
+      memberName: e.members?.full_name ?? null,
+      scheduledAt: e.scheduled_at,
+    });
+    penciledByChore.set(e.chore_id, list);
+  }
+
   // The board shows every active chore (paused ones included, so they can be
   // resumed) plus any retired one that still has assignments this month (so
   // history months render completely).
   const boardChores: BoardChore[] = chores
-    .filter((c) => c.active || assigneesByChore.has(c.id))
+    .filter(
+      (c) =>
+        c.active || assigneesByChore.has(c.id) || penciledByChore.has(c.id),
+    )
     .map((c) => ({
       id: c.id,
       name: c.name,
@@ -99,6 +159,7 @@ export default async function OfficerChoresPage({
       interval: c.interval,
       schedulingEnabled: c.scheduling_enabled,
       assignees: assigneesByChore.get(c.id) ?? [],
+      penciled: penciledByChore.get(c.id) ?? [],
     }));
 
   const absentNames = absences
@@ -115,18 +176,58 @@ export default async function OfficerChoresPage({
     .filter((m) => m.kiln_team && !m.officer_status)
     .map((m) => m.full_name);
 
-  // Coverage for the reshuffle card's chart, before any draft: everyone in the
-  // rotation (officers sit out) and how many jobs they hold this month.
-  const jobsPerMember = new Map<string, number>();
-  for (const a of assignments) {
-    jobsPerMember.set(a.member_id, (jobsPerMember.get(a.member_id) ?? 0) + 1);
-  }
-  const published = members
+  // Jobs the draft card works with: everything in the rotation, plus any job
+  // that already carries a penciled line (a paused one, say).
+  const draftJobs: DraftJob[] = chores
+    .filter(
+      (c) =>
+        (c.active && !c.paused && c.slots > 0) || penciledByChore.has(c.id),
+    )
+    .map((c) => ({
+      choreId: c.id,
+      choreName: c.name,
+      slots: c.slots,
+      schedulingEnabled: c.scheduling_enabled,
+      published: (assigneesByChore.get(c.id) ?? []).map((a) => ({
+        memberId: a.memberId,
+        memberName: a.memberName,
+      })),
+      entries: (penciledByChore.get(c.id) ?? []).map((p) => ({
+        entryId: p.entryId,
+        memberId: p.memberId,
+        memberName: p.memberName,
+        scheduledAt: p.scheduledAt,
+      })),
+    }));
+
+  // Who sits the month out, worked out from what's true right now rather than
+  // from whatever the draft was generated against — see src/lib/job-draft.ts.
+  const absentMemberIds = absences.map((a) => a.member_id);
+  const exemptions = deriveExemptions({
+    members,
+    absentMemberIds,
+    creditMemberIds,
+    workingMemberIds: [
+      ...assignments.map((a) => a.member_id),
+      ...draftEntries.flatMap((e) => (e.member_id ? [e.member_id] : [])),
+    ],
+  });
+
+  const absentSet = new Set(absentMemberIds);
+  const creditSet = new Set(creditMemberIds);
+  // The "+" picker offers every active member except officers and the kiln
+  // team. Absent members and credit holders are listed but tagged, so adding
+  // one is a deliberate override rather than an accident.
+  const pickerMembers: PickerEntry[] = members
     .filter((m) => !m.officer_status && !m.kiln_team)
     .map((m) => ({
       id: m.id,
       name: m.full_name,
-      jobs: jobsPerMember.get(m.id) ?? 0,
+      note: absentSet.has(m.id)
+        ? ("absent" as const)
+        : creditSet.has(m.id)
+          ? ("credit" as const)
+          : null,
     }));
 
   const planningMonths = Array.from({ length: PLANNING_MONTHS }, (_, i) =>
@@ -189,11 +290,21 @@ export default async function OfficerChoresPage({
 
       {month >= currentMonth && (
         <div className="mt-5">
-          <ReshuffleCard
+          <DraftCard
             key={month}
             month={month}
             months={planningMonths}
-            published={published}
+            jobs={draftJobs}
+            draft={
+              draftRow
+                ? {
+                    updatedAt: draftRow.updated_at,
+                    updatedBy: draftRow.members?.full_name ?? null,
+                  }
+                : null
+            }
+            exemptions={exemptions}
+            pickerMembers={pickerMembers}
           />
         </div>
       )}

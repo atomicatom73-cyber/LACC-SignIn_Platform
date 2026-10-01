@@ -6,6 +6,7 @@ import { requireOfficer } from "@/lib/auth";
 import { generateMonthlyDraft } from "@/lib/chore-algorithm";
 import { parseSchedule } from "@/lib/chores";
 import { emailNewAssignments } from "@/lib/job-assignment-email";
+import { deriveExemptions } from "@/lib/job-draft";
 import { officerTitle } from "@/lib/roles";
 import { addMonths, monthLabel } from "@/lib/studio";
 import type { ChoreInterval } from "@/lib/types";
@@ -288,45 +289,63 @@ export async function setAssignmentStatus(
   return null;
 }
 
-/** What the reshuffle proposes, resolved to names for review in the UI. */
-export type ReshufflePreview = {
-  targetMonth: string;
-  proposals: {
-    choreId: string;
-    choreName: string;
-    /** How many people this job wants, for the fill counter on its row. */
-    slots: number;
-    members: { id: string; name: string }[];
-  }[];
-  creditSpends: { id: string; name: string }[];
-  absentNames: string[];
-  officerNames: string[];
-  kilnTeamNames: string[];
-  /** Everyone who was in the draw (not an officer, kiln team, absent, or
-   *  holding a credit) — the UI diffs this against the edited draft for the
-   *  coverage chart and the "no job" list. */
-  eligibleMembers: { id: string; name: string }[];
-  /** Who the "+" picker offers: every active member except officers and the
-   *  kiln team. Absent members and credit holders are in the list but tagged,
-   *  so adding one is a deliberate override rather than an accident. */
-  pickerMembers: { id: string; name: string; note: "absent" | "credit" | null }[];
-  warnings: string[];
-  existingCount: number;
-};
+// ---------------------------------------------------------------------------
+// Penciled drafts
+//
+// A month's draft is saved server-side as it's edited, so closing the tab,
+// switching months, or losing the phone never loses the work — and reopening
+// the month shows exactly what was left behind instead of re-running the
+// algorithm. Nothing in a draft reaches a member: no email, nothing on /me,
+// nothing on the printable sheet, until publishDraft turns it into real
+// assignments.
+// ---------------------------------------------------------------------------
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Run the deterministic draft algorithm for a month without writing anything.
- * The coordinator reviews (and can trim) the result before publishing.
+ * Open (or re-seed) a draft for a month.
+ *
+ * "blank" opens an empty one — the way to pencil a couple of open-studio
+ * sessions without disturbing anything else. "algorithm" fills it from the
+ * monthly draw, and REPLACES whatever was penciled before, which is why the
+ * UI makes that a deliberate second tap.
+ *
+ * Either way the draw only ever proposes what's still open: members who
+ * already hold a published job this month are out of the pool, and a job's
+ * published assignees count against its slots.
  */
-export async function previewReshuffle(
-  targetMonth: string,
-): Promise<{ error: string } | { preview: ReshufflePreview }> {
-  const { supabase } = await requireOfficer("jobs");
+export async function startDraft(
+  month: string,
+  mode: "blank" | "algorithm",
+): Promise<FormState> {
+  const { supabase, member } = await requireOfficer("jobs");
 
-  if (!MONTH_RE.test(targetMonth)) return { error: "Bad month." };
-  const prevMonth = addMonths(targetMonth, -1);
+  if (!MONTH_RE.test(month)) return { error: "Bad month." };
 
-  const [choresRes, membersRes, prevRes, absentRes, creditsRes, existingRes] =
+  // The draft row has to exist before its entries — they're FK'd to it.
+  const { error: draftError } = await supabase
+    .from("chore_drafts")
+    .upsert(
+      { month, updated_by: member.id, updated_at: new Date().toISOString() },
+      { onConflict: "month" },
+    );
+  if (draftError) return { error: draftError.message };
+
+  if (mode === "blank") {
+    revalidatePath("/officer/chores");
+    return { success: "Draft started — pencil in whoever you like." };
+  }
+
+  // Re-seeding throws away the hand edits on purpose.
+  const { error: clearError } = await supabase
+    .from("chore_draft_entries")
+    .delete()
+    .eq("month", month);
+  if (clearError) return { error: clearError.message };
+
+  const prevMonth = addMonths(month, -1);
+  const [choresRes, membersRes, prevRes, absentRes, creditsRes, publishedRes] =
     await Promise.all([
       supabase
         .from("chores")
@@ -344,20 +363,17 @@ export async function previewReshuffle(
         .from("chore_assignments")
         .select("chore_id, member_id")
         .eq("month", prevMonth),
-      supabase.from("absences").select("member_id").eq("month", targetMonth),
-      supabase
-        .from("chore_credits")
-        .select("member_id")
-        .is("used_month", null),
+      supabase.from("absences").select("member_id").eq("month", month),
+      supabase.from("chore_credits").select("member_id").is("used_month", null),
       supabase
         .from("chore_assignments")
-        .select("id", { count: "exact", head: true })
-        .eq("month", targetMonth),
+        .select("chore_id, member_id")
+        .eq("month", month),
     ]);
 
   const firstError =
     choresRes.error ?? membersRes.error ?? prevRes.error ?? absentRes.error ??
-    creditsRes.error ?? existingRes.error;
+    creditsRes.error ?? publishedRes.error;
   if (firstError) return { error: firstError.message };
 
   const chores = choresRes.data ?? [];
@@ -369,157 +385,416 @@ export async function previewReshuffle(
     return { error: "No active members to assign jobs to." };
   }
 
-  const absentMemberIds = (absentRes.data ?? []).map((a) => a.member_id);
-  const creditAvailableMemberIds = [
-    ...new Set((creditsRes.data ?? []).map((c) => c.member_id)),
-  ];
+  // What's already real this month: those people are spoken for, and those
+  // slots are filled, so the draw fills in around them.
+  const published = publishedRes.data ?? [];
+  const publishedMemberIds = new Set(published.map((a) => a.member_id));
+  const publishedPerChore = new Map<string, number>();
+  for (const a of published) {
+    publishedPerChore.set(
+      a.chore_id,
+      (publishedPerChore.get(a.chore_id) ?? 0) + 1,
+    );
+  }
 
   const draft = generateMonthlyDraft({
-    targetMonth,
-    chores,
-    members,
+    targetMonth: month,
+    chores: chores.map((c) => ({
+      ...c,
+      slots: Math.max(0, c.slots - (publishedPerChore.get(c.id) ?? 0)),
+    })),
+    members: members.filter((m) => !publishedMemberIds.has(m.id)),
     prevAssignments: prevRes.data ?? [],
-    absentMemberIds,
-    creditAvailableMemberIds,
-    officerMemberIds: members
-      .filter((m) => m.officer_status)
-      .map((m) => m.id),
+    absentMemberIds: (absentRes.data ?? []).map((a) => a.member_id),
+    creditAvailableMemberIds: [
+      ...new Set((creditsRes.data ?? []).map((c) => c.member_id)),
+    ],
+    officerMemberIds: members.filter((m) => m.officer_status).map((m) => m.id),
     kilnTeamMemberIds: members.filter((m) => m.kiln_team).map((m) => m.id),
   });
 
-  const nameOf = new Map(members.map((m) => [m.id, m.full_name]));
-  const chore = new Map(chores.map((c) => [c.id, c]));
-  const exempt = new Set([
-    ...draft.exemptOfficers,
-    ...draft.exemptKilnTeam,
-    ...draft.exemptAbsent,
-    ...draft.creditsToConsume,
-  ]);
-  const absent = new Set(absentMemberIds);
-  const credited = new Set(creditAvailableMemberIds);
+  const rows = draft.proposals.flatMap((p) =>
+    p.member_ids.map((memberId) => ({
+      month,
+      chore_id: p.chore_id,
+      member_id: memberId,
+    })),
+  );
+  if (rows.length > 0) {
+    const { error } = await supabase.from("chore_draft_entries").insert(rows);
+    if (error) return { error: error.message };
+  }
 
+  revalidatePath("/officer/chores");
   return {
-    preview: {
-      targetMonth,
-      proposals: draft.proposals.map((p) => ({
-        choreId: p.chore_id,
-        choreName: chore.get(p.chore_id)?.name ?? "Unknown job",
-        slots: chore.get(p.chore_id)?.slots ?? 0,
-        members: p.member_ids.map((id) => ({
-          id,
-          name: nameOf.get(id) ?? "Unknown member",
-        })),
-      })),
-      creditSpends: draft.creditsToConsume.map((id) => ({
-        id,
-        name: nameOf.get(id) ?? "Unknown member",
-      })),
-      absentNames: draft.exemptAbsent.map((id) => nameOf.get(id) ?? "Unknown"),
-      officerNames: draft.exemptOfficers.map(
-        (id) => nameOf.get(id) ?? "Unknown",
-      ),
-      kilnTeamNames: draft.exemptKilnTeam.map(
-        (id) => nameOf.get(id) ?? "Unknown",
-      ),
-      eligibleMembers: members
-        .filter((m) => !exempt.has(m.id))
-        .map((m) => ({ id: m.id, name: m.full_name })),
-      pickerMembers: members
-        .filter((m) => !m.officer_status && !m.kiln_team)
-        .map((m) => ({
-          id: m.id,
-          name: m.full_name,
-          note: absent.has(m.id)
-            ? ("absent" as const)
-            : credited.has(m.id)
-              ? ("credit" as const)
-              : null,
-        })),
-      warnings: draft.warnings,
-      existingCount: existingRes.count ?? 0,
-    },
+    success: `Draft filled — ${rows.length} name${rows.length === 1 ? "" : "s"} penciled in. Nobody has been told yet.`,
   };
 }
 
 /**
- * Write a reviewed draft: insert the assignments (duplicates from earlier
- * manual assigning are skipped) and spend one credit per exempted member.
+ * Pencil someone onto a job. `entryId` comes from the browser so the chip can
+ * appear instantly and the same call is safe to retry.
  */
-export async function publishReshuffle(input: {
-  targetMonth: string;
-  assignments: { chore_id: string; member_id: string }[];
-  creditMemberIds: string[];
-}): Promise<FormState> {
-  const { supabase, member } = await requireOfficer("jobs");
+export async function pencilMember(
+  entryId: string,
+  month: string,
+  choreId: string,
+  memberId: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
 
-  const { targetMonth } = input;
-  if (!MONTH_RE.test(targetMonth)) return { error: "Bad month." };
-  if (input.assignments.length === 0 && input.creditMemberIds.length === 0) {
-    return { error: "Nothing left in the draft to publish." };
+  if (!UUID_RE.test(entryId)) return { error: "Bad entry id." };
+  if (!MONTH_RE.test(month)) return { error: "Bad month." };
+  if (!choreId || !memberId) return { error: "Pick a member." };
+
+  const { error } = await supabase.from("chore_draft_entries").insert({
+    id: entryId,
+    month,
+    chore_id: choreId,
+    member_id: memberId,
+  });
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "They are already penciled onto this job." };
+    }
+    return { error: error.message };
   }
 
-  if (input.assignments.length > 0) {
-    const rows = input.assignments.map((a) => ({
-      chore_id: a.chore_id,
-      member_id: a.member_id,
-      month: targetMonth,
-      assigned_by: member.id,
-    }));
-    // RETURNING on an ON CONFLICT DO NOTHING gives back only the rows that
-    // were really inserted — so republishing a draft, or publishing one that
-    // repeats an earlier manual assignment, emails nobody twice.
-    const { data: inserted, error } = await supabase
-      .from("chore_assignments")
-      .upsert(rows, {
-        onConflict: "chore_id,member_id,month",
-        ignoreDuplicates: true,
-      })
-      .select("chore_id, member_id");
-    if (error) return { error: error.message };
+  revalidatePath("/officer/chores");
+  return null;
+}
 
+/**
+ * Pencil an empty slot onto a job — a date and time with nobody on it yet, for
+ * laying out the month's open-studio sessions before the names are settled.
+ */
+export async function pencilSlot(
+  entryId: string,
+  month: string,
+  choreId: string,
+  date: string,
+  time: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!UUID_RE.test(entryId)) return { error: "Bad entry id." };
+  if (!MONTH_RE.test(month)) return { error: "Bad month." };
+  if (!choreId) return { error: "Missing job." };
+
+  const scheduled = parseSchedule(date, time);
+  if (typeof scheduled !== "string" && scheduled !== null) return scheduled;
+
+  const { error } = await supabase.from("chore_draft_entries").insert({
+    id: entryId,
+    month,
+    chore_id: choreId,
+    member_id: null,
+    scheduled_at: scheduled,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/** Put a name on an empty penciled slot, keeping the date and time it holds. */
+export async function nameDraftSlot(
+  entryId: string,
+  memberId: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!entryId || !memberId) return { error: "Pick a member." };
+
+  const { error } = await supabase
+    .from("chore_draft_entries")
+    .update({ member_id: memberId })
+    .eq("id", entryId)
+    .is("member_id", null);
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "They are already penciled onto this job." };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/** Rub out one penciled line. Nobody was told, so there's nothing to undo. */
+export async function unpencil(
+  entryId: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!entryId) return { error: "Missing entry." };
+
+  const { error } = await supabase
+    .from("chore_draft_entries")
+    .delete()
+    .eq("id", entryId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/** Drag a penciled name (and its time) from one job to another. */
+export async function movePencil(
+  entryId: string,
+  toChoreId: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!entryId || !toChoreId) return { error: "Missing entry." };
+
+  const { error } = await supabase
+    .from("chore_draft_entries")
+    .update({ chore_id: toChoreId })
+    .eq("id", entryId);
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "They are already penciled onto that job." };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/**
+ * Set (or clear) when a penciled line happens — the whole point of the draft
+ * for scheduled jobs like open studio, where the date and time have to be
+ * settled before anyone is officially on the hook for it.
+ */
+export async function setPencilSchedule(
+  entryId: string,
+  date: string,
+  time: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!entryId) return { error: "Missing entry." };
+
+  const scheduled = parseSchedule(date, time);
+  if (typeof scheduled !== "string" && scheduled !== null) return scheduled;
+
+  const { error } = await supabase
+    .from("chore_draft_entries")
+    .update({ scheduled_at: scheduled })
+    .eq("id", entryId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/** Throw the whole draft away. Published assignments are untouched. */
+export async function discardDraft(
+  month: string,
+): Promise<{ error: string } | null> {
+  const { supabase } = await requireOfficer("jobs");
+
+  if (!MONTH_RE.test(month)) return { error: "Bad month." };
+
+  const { error } = await supabase
+    .from("chore_drafts")
+    .delete()
+    .eq("month", month);
+  if (error) return { error: error.message };
+
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/**
+ * Make the draft official: every penciled name becomes a real assignment,
+ * carrying the date and time it was penciled with, and only now does anyone
+ * get an email.
+ *
+ * Read from the database rather than from the browser, so what gets published
+ * is what the coordinator last saw saved. Slots still waiting for a name stay
+ * penciled — publishing takes what's ready and leaves the rest on the pad.
+ */
+export async function publishDraft(month: string): Promise<FormState> {
+  const { supabase, member } = await requireOfficer("jobs");
+
+  if (!MONTH_RE.test(month)) return { error: "Bad month." };
+
+  const [entriesRes, existingRes, membersRes, absentRes, creditsRes] =
+    await Promise.all([
+      supabase
+        .from("chore_draft_entries")
+        .select("id, chore_id, member_id, scheduled_at")
+        .eq("month", month),
+      supabase
+        .from("chore_assignments")
+        .select("id, chore_id, member_id")
+        .eq("month", month),
+      supabase
+        .from("members")
+        .select("id, full_name, officer_status, kiln_team")
+        .eq("active", true)
+        .eq("role", "member"),
+      supabase.from("absences").select("member_id").eq("month", month),
+      supabase.from("chore_credits").select("member_id").is("used_month", null),
+    ]);
+
+  const firstError =
+    entriesRes.error ?? existingRes.error ?? membersRes.error ??
+    absentRes.error ?? creditsRes.error;
+  if (firstError) return { error: firstError.message };
+
+  const entries = entriesRes.data ?? [];
+  const existing = existingRes.data ?? [];
+  const named = entries.filter(
+    (e): e is typeof e & { member_id: string } => e.member_id !== null,
+  );
+  const unnamed = entries.length - named.length;
+
+  if (named.length === 0) {
+    return {
+      error:
+        unnamed > 0
+          ? "Every penciled slot still needs a name before it can be assigned."
+          : "Nothing penciled in to assign.",
+    };
+  }
+
+  // Anything already assigned is left alone rather than inserted twice — the
+  // only thing carried over is a time the draft settled on.
+  const pairKey = (choreId: string, memberId: string) =>
+    `${choreId}:${memberId}`;
+  const alreadyAssigned = new Map(
+    existing.map((a) => [pairKey(a.chore_id, a.member_id), a.id]),
+  );
+
+  const fresh = named.filter(
+    (e) => !alreadyAssigned.has(pairKey(e.chore_id, e.member_id)),
+  );
+
+  if (fresh.length > 0) {
+    const { error } = await supabase.from("chore_assignments").insert(
+      fresh.map((e) => ({
+        chore_id: e.chore_id,
+        member_id: e.member_id,
+        month,
+        scheduled_at: e.scheduled_at,
+        assigned_by: member.id,
+      })),
+    );
+    if (error) {
+      if (error.code === "23505") {
+        return {
+          error:
+            "Someone was assigned one of these jobs while the draft was open — reload the month and try again.",
+        };
+      }
+      return { error: error.message };
+    }
+  }
+
+  // A time penciled against a job someone was already given still lands.
+  for (const e of named) {
+    const id = alreadyAssigned.get(pairKey(e.chore_id, e.member_id));
+    if (!id || !e.scheduled_at) continue;
+    const { error } = await supabase
+      .from("chore_assignments")
+      .update({ scheduled_at: e.scheduled_at })
+      .eq("id", id);
+    if (error) return { error: error.message };
+  }
+
+  // Tell the new assignees — after the response, so a slow mail provider never
+  // stalls the button, and only for rows that didn't already exist.
+  if (fresh.length > 0) {
     after(() =>
       emailNewAssignments({
-        assignments: inserted ?? [],
-        month: targetMonth,
+        assignments: fresh.map((e) => ({
+          chore_id: e.chore_id,
+          member_id: e.member_id,
+        })),
+        month,
         sentBy: { name: member.full_name, title: officerTitle(member) },
       }),
     );
   }
 
-  // Spend the oldest available credit per exempted member — unless a credit
-  // was already spent on this month (e.g. the draft was published twice).
-  const creditIds = [...new Set(input.creditMemberIds)];
-  if (creditIds.length > 0) {
-    const { data: spent, error: spentError } = await supabase
-      .from("chore_credits")
-      .select("member_id")
-      .eq("used_month", targetMonth)
-      .in("member_id", creditIds);
-    if (spentError) return { error: spentError.message };
-    const alreadySpent = new Set((spent ?? []).map((c) => c.member_id));
+  // Credits are spent on whoever ended up with no job at all — recomputed
+  // now, so a credit holder the coordinator penciled in keeps their credit.
+  const working = new Set<string>([
+    ...existing.map((a) => a.member_id),
+    ...named.map((e) => e.member_id),
+  ]);
+  const { creditSpends } = deriveExemptions({
+    members: membersRes.data ?? [],
+    absentMemberIds: (absentRes.data ?? []).map((a) => a.member_id),
+    creditMemberIds: [
+      ...new Set((creditsRes.data ?? []).map((c) => c.member_id)),
+    ],
+    workingMemberIds: [...working],
+  });
 
-    for (const memberId of creditIds) {
-      if (alreadySpent.has(memberId)) continue;
-      const { data: credit, error: findError } = await supabase
-        .from("chore_credits")
-        .select("id")
-        .eq("member_id", memberId)
-        .is("used_month", null)
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      if (findError) return { error: findError.message };
-      if (!credit) continue; // credit vanished since the preview — skip
-      const { error } = await supabase
-        .from("chore_credits")
-        .update({ used_month: targetMonth })
-        .eq("id", credit.id)
-        .is("used_month", null);
-      if (error) return { error: error.message };
-    }
+  const spentThisMonth = await supabase
+    .from("chore_credits")
+    .select("member_id")
+    .eq("used_month", month);
+  if (spentThisMonth.error) return { error: spentThisMonth.error.message };
+  const alreadySpent = new Set(
+    (spentThisMonth.data ?? []).map((c) => c.member_id),
+  );
+
+  for (const { id: memberId } of creditSpends) {
+    if (alreadySpent.has(memberId)) continue;
+    const { data: credit, error: findError } = await supabase
+      .from("chore_credits")
+      .select("id")
+      .eq("member_id", memberId)
+      .is("used_month", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (findError) return { error: findError.message };
+    if (!credit) continue; // credit vanished mid-publish — skip
+    const { error } = await supabase
+      .from("chore_credits")
+      .update({ used_month: month })
+      .eq("id", credit.id)
+      .is("used_month", null);
+    if (error) return { error: error.message };
+  }
+
+  // Clear what was published. Slots still waiting for a name keep the draft
+  // open so the dates laid out against them are not lost.
+  const { error: clearError } = await supabase
+    .from("chore_draft_entries")
+    .delete()
+    .in(
+      "id",
+      named.map((e) => e.id),
+    );
+  if (clearError) return { error: clearError.message };
+
+  if (unnamed === 0) {
+    const { error } = await supabase
+      .from("chore_drafts")
+      .delete()
+      .eq("month", month);
+    if (error) return { error: error.message };
   }
 
   revalidatePath("/officer/chores");
   revalidatePath("/officer/members");
-  return { success: `${monthLabel(targetMonth)} assignments published.` };
+  revalidatePath("/me");
+
+  const told = fresh.length;
+  return {
+    success:
+      `${monthLabel(month)} assigned — ${told} member${told === 1 ? "" : "s"} emailed.` +
+      (unnamed > 0
+        ? ` ${unnamed} slot${unnamed === 1 ? "" : "s"} still waiting for a name, left penciled.`
+        : ""),
+  };
 }
