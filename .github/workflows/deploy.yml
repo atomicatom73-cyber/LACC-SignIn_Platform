@@ -3,6 +3,14 @@
 # this workflow does it with a studio token stored as the VERCEL_TOKEN secret.
 #   push to main    → production (laccstudio.org)
 #   push to preview → preview deployment (URL shown in the run summary)
+#
+# On main, new files in supabase/migrations/ are applied to the live database
+# FIRST (schema before code). The Supabase project lives in the studio's org, so
+# this goes through a direct Postgres connection — the session pooler URL in the
+# SUPABASE_DB_URL secret — instead of the dashboard SQL editor. Name new files
+# <YYYYMMDDHHMMSS>_<name>.sql (the CLI skips anything else); applied ones are
+# tracked in supabase_migrations.schema_migrations and never re-run. Preview
+# pushes never touch the database.
 name: Deploy to Vercel
 
 on:
@@ -23,6 +31,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Apply database migrations
+        if: github.ref_name == 'main'
+        run: npx --yes supabase@2.119.0 db push --yes --db-url "$SUPABASE_DB_URL"
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
       - name: Link to the studio project
         run: npx --yes vercel@latest link --yes --project lacc-studio --scope lacc1 --token "$VERCEL_TOKEN"

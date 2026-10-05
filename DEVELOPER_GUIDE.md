@@ -228,7 +228,7 @@ Every table has RLS enabled with explicit policies (members read own rows, offic
 2. Write RLS policies for the new table **before** writing any app code against it. No policies = nobody can read it through the normal clients (and if you "fix" that with the admin client, you've bypassed security).
 3. Run the whole file in the SQL Editor of your **test** Supabase project. Run it twice — the second run proves idempotency.
 4. Update `src/lib/types.ts` and build the feature.
-5. When merging: run the file on the production Supabase project, then deploy the code. (Schema first, code second — new code must never hit a database that lacks its tables.)
+5. When merging: also save just the change as `supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` (the Supabase CLI ignores any other filename). Pushing to `main` runs `.github/workflows/deploy.yml`, which applies new migration files to the production database through the `SUPABASE_DB_URL` secret **before** deploying the code. (Schema first, code second — new code must never hit a database that lacks its tables.) The production project lives in the studio's Supabase org, so this connection is how changes get there without dashboard access. Check pending changes locally with `npx supabase db push --dry-run --db-url "$SUPABASE_DB_URL"`.
 
 ---
 
