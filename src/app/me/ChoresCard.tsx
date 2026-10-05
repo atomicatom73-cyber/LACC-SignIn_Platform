@@ -2,14 +2,21 @@
 
 import { useOptimistic, useState, useTransition } from "react";
 import { RichText } from "@/components/RichText";
-import { dueLabel } from "@/lib/chores";
+import { WhenInputs } from "@/components/WhenInputs";
+import { dueLabel, parseCompletion } from "@/lib/chores";
 import {
   formatStudioDateTime,
   monthLabel,
   studioDateTimeParts,
+  studioDayKey,
 } from "@/lib/studio";
 import type { ChoreInterval } from "@/lib/types";
-import { leaveJobNote, setMyChoreSchedule, toggleMyChore } from "./actions";
+import {
+  completeMyChore,
+  leaveJobNote,
+  reopenMyChore,
+  setMyChoreSchedule,
+} from "./actions";
 
 export type MyChore = {
   id: string;
@@ -22,6 +29,8 @@ export type MyChore = {
   choreScheduling: boolean;
   /** When you said you'd do it; null until you pick. */
   scheduledAt: string | null;
+  /** When you said you finished it; null while pending. */
+  completedAt: string | null;
 };
 
 export function ChoresCard({
@@ -45,35 +54,50 @@ export function ChoresCard({
     { assignmentId: string | null; justDone?: boolean } | undefined
   >(undefined);
 
+  // Which job has its "when did you finish?" form open, if any. A job can't
+  // be ticked off without one.
+  const [finishingId, setFinishingId] = useState<string | null>(null);
+
   // The card flips instantly; the server settles it (and a failure reverts).
-  const [optimisticChores, flipOptimistic] = useOptimistic(
+  const [optimisticChores, setOptimistic] = useOptimistic(
     chores,
-    (current, id: string) =>
+    (current, change: { id: string; completedAt: string | null }): MyChore[] =>
       current.map((c) =>
-        c.id === id
+        c.id === change.id
           ? {
               ...c,
-              status: c.status === "completed" ? "pending" : "completed",
+              status: change.completedAt ? "completed" : "pending",
+              completedAt: change.completedAt,
             }
           : c,
       ),
   );
 
-  function handleToggle(id: string) {
-    const completing =
-      chores.find((c) => c.id === id)?.status === "pending";
+  function handleComplete(id: string, date: string, time: string, at: string) {
+    setFinishingId(null);
     setBusyId(id);
     setError(null);
     startTransition(async () => {
-      flipOptimistic(id);
-      const res = await toggleMyChore(id);
+      setOptimistic({ id, completedAt: at });
+      const res = await completeMyChore(id, date, time);
       if (res?.error) {
         setError(res.error);
-      } else if (completing) {
+      } else {
         // Ticking a job off is the moment people actually have something to
         // report ("the mop head is shot") — so offer the note right there.
         setNote({ assignmentId: id, justDone: true });
       }
+      setBusyId(null);
+    });
+  }
+
+  function handleReopen(id: string) {
+    setBusyId(id);
+    setError(null);
+    startTransition(async () => {
+      setOptimistic({ id, completedAt: null });
+      const res = await reopenMyChore(id);
+      if (res?.error) setError(res.error);
       setBusyId(null);
     });
   }
@@ -136,10 +160,15 @@ export function ChoresCard({
                     )}
                   </div>
                   <button
-                    onClick={() => handleToggle(c.id)}
-                    disabled={pending && busyId === c.id}
-                    className={`shrink-0 rounded-xl px-3 py-2 text-sm font-semibold transition active:scale-[0.97] disabled:opacity-60 ${
+                    onClick={() =>
                       done
+                        ? handleReopen(c.id)
+                        : setFinishingId(finishingId === c.id ? null : c.id)
+                    }
+                    disabled={pending && busyId === c.id}
+                    aria-expanded={done ? undefined : finishingId === c.id}
+                    className={`shrink-0 rounded-xl px-3 py-2 text-sm font-semibold transition active:scale-[0.97] disabled:opacity-60 ${
+                      done || finishingId === c.id
                         ? "border border-border bg-surface text-muted"
                         : "bg-success text-background"
                     }`}
@@ -147,6 +176,23 @@ export function ChoresCard({
                     {pending && busyId === c.id ? "…" : done ? "Undo" : "Done ✓"}
                   </button>
                 </div>
+                {done && c.completedAt && (
+                  <p className="mt-1 text-xs text-muted">
+                    Finished{" "}
+                    <span className="font-medium text-foreground">
+                      {formatStudioDateTime(c.completedAt)}
+                    </span>
+                  </p>
+                )}
+                {!done && finishingId === c.id && (
+                  <FinishForm
+                    jobMonth={c.month}
+                    onDone={(date, time, at) =>
+                      handleComplete(c.id, date, time, at)
+                    }
+                    onCancel={() => setFinishingId(null)}
+                  />
+                )}
                 {/* Full width, under the button — on a phone the instructions
                     are unreadable squeezed into the column beside it. */}
                 {c.choreDescription && (
@@ -204,6 +250,79 @@ export function ChoresCard({
 
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
     </section>
+  );
+}
+
+/**
+ * "When did you finish?" — the step between tapping Done and the job being
+ * ticked off. Both boxes start empty on purpose: the coordinator wants the
+ * real time, not whatever the phone happened to say when the button was hit.
+ */
+function FinishForm({
+  jobMonth,
+  onDone,
+  onCancel,
+}: {
+  jobMonth: string;
+  onDone: (date: string, time: string, at: string) => void;
+  onCancel: () => void;
+}) {
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  // Only ever rendered after a tap, so reading the clock here can't disagree
+  // with the server render.
+  const today = studioDayKey();
+
+  const submit = () => {
+    const finished = parseCompletion(date, time, jobMonth);
+    if (typeof finished !== "string") {
+      setError(finished.error);
+      return;
+    }
+    onDone(date, time, finished);
+  };
+
+  return (
+    <div className="mt-2 rounded-xl border border-success/40 bg-surface px-3 py-2.5">
+      <p className="text-sm font-semibold">When did you finish?</p>
+      <p className="text-xs text-muted">
+        Enter the day and time you did it — the volunteer coordinator sees this.
+      </p>
+      <div className="mt-2">
+        <WhenInputs
+          captioned
+          date={date}
+          time={time}
+          minDate={jobMonth}
+          maxDate={today}
+          onDate={(value) => {
+            setDate(value);
+            setError(null);
+          }}
+          onTime={(value) => {
+            setTime(value);
+            setError(null);
+          }}
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <button
+          onClick={submit}
+          disabled={!date || !time}
+          className="rounded-lg bg-success px-3 py-2 text-sm font-semibold text-background transition active:scale-[0.97] disabled:opacity-50"
+        >
+          Mark done ✓
+        </button>
+        <button
+          onClick={onCancel}
+          className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted transition active:scale-[0.97]"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
+    </div>
   );
 }
 
@@ -279,9 +398,6 @@ function NoteComposer({
   );
 }
 
-const SCHEDULE_INPUT =
-  "min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-2 text-sm outline-none focus:border-accent";
-
 /**
  * "When will you do it?" — only on jobs an officer marked schedulable. Shows
  * the pick as a line of text once it's made, so the card stays calm; tapping
@@ -348,21 +464,8 @@ function MyScheduleRow({
 
   return (
     <div className="mt-2 border-t border-border pt-2">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className={SCHEDULE_INPUT}
-          aria-label="Date you'll do this job"
-        />
-        <input
-          type="time"
-          value={time}
-          onChange={(e) => setTime(e.target.value)}
-          className={SCHEDULE_INPUT}
-          aria-label="Time you'll do this job"
-        />
+      <WhenInputs date={date} time={time} onDate={setDate} onTime={setTime} />
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <button
           onClick={() => save(date, time)}
           disabled={pending || !date}

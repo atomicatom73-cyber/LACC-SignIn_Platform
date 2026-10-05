@@ -6,7 +6,7 @@ import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { writeAltSession } from "@/lib/alt-session";
-import { parseSchedule } from "@/lib/chores";
+import { parseCompletion, parseSchedule } from "@/lib/chores";
 import { requestSigninLogExport } from "@/lib/signin-log-sheet";
 
 /** Toggle the current user's shift: clock in if out, clock out if in. */
@@ -62,8 +62,16 @@ export async function toggleShift() {
   after(requestSigninLogExport);
 }
 
-/** Mark one of the current user's chores done (or back to pending). */
-export async function toggleMyChore(assignmentId: string) {
+/**
+ * Mark one of the current user's jobs done, at the date and time they say they
+ * finished it (studio wall clock). Both are required: completed_at holds what
+ * the member reported, not the moment they tapped the button.
+ */
+export async function completeMyChore(
+  assignmentId: string,
+  date: string,
+  time: string,
+): Promise<{ error: string } | null> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -79,23 +87,52 @@ export async function toggleMyChore(assignmentId: string) {
 
   const { data: assignment } = await supabase
     .from("chore_assignments")
-    .select("id, status")
+    .select("id, month")
     .eq("id", assignmentId)
     .eq("member_id", member.id)
     .maybeSingle();
   if (!assignment) return { error: "Job not found." };
 
-  const completing = assignment.status === "pending";
+  const finished = parseCompletion(date, time, assignment.month);
+  if (typeof finished !== "string") return finished;
+
   const { error } = await supabase
     .from("chore_assignments")
-    .update({
-      status: completing ? "completed" : "pending",
-      completed_at: completing ? new Date().toISOString() : null,
-    })
+    .update({ status: "completed", completed_at: finished })
     .eq("id", assignment.id);
   if (error) return { error: error.message };
 
   revalidatePath("/me");
+  revalidatePath("/officer/chores");
+  return null;
+}
+
+/** Undo a "done" — the job goes back to pending and the reported time is cleared. */
+export async function reopenMyChore(
+  assignmentId: string,
+): Promise<{ error: string } | null> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: member } = await supabase
+    .from("members")
+    .select("id")
+    .eq("user_id", user.id)
+    .single();
+  if (!member) return { error: "No member profile found." };
+
+  const { error } = await supabase
+    .from("chore_assignments")
+    .update({ status: "pending", completed_at: null })
+    .eq("id", assignmentId)
+    .eq("member_id", member.id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/me");
+  revalidatePath("/officer/chores");
   return null;
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { WhenInputs } from "@/components/WhenInputs";
 import {
   formatStudioDateTime,
   monthLabel,
@@ -38,7 +39,11 @@ export type DraftJob = {
   /** Invites a date and time per line (open studio, mainly). */
   schedulingEnabled: boolean;
   /** Already assigned and emailed this month — shown here, managed below. */
-  published: { memberId: string; memberName: string }[];
+  published: {
+    memberId: string;
+    memberName: string;
+    scheduledAt: string | null;
+  }[];
   entries: DraftEntry[];
 };
 
@@ -58,6 +63,12 @@ export type Exemptions = {
   inTheDraw: { id: string; name: string }[];
 };
 
+/**
+ * Fired by a dated job's card ("✏️ Pencil in sessions") to bring that job's
+ * "new session" form up in the draft. Detail: the chore id.
+ */
+export const PENCIL_SESSIONS_EVENT = "lacc:pencil-sessions";
+
 /** A draft edit, applied to the board the instant it's made. */
 type Op =
   | { kind: "add"; choreId: string; entry: DraftEntry }
@@ -69,6 +80,10 @@ type Op =
 function applyOp(jobs: DraftJob[], op: Op): DraftJob[] {
   switch (op.kind) {
     case "add":
+      // Idempotent: a refresh that already carries the line mustn't double it.
+      if (jobs.some((j) => j.entries.some((e) => e.entryId === op.entry.entryId))) {
+        return jobs;
+      }
       return jobs.map((j) =>
         j.choreId === op.choreId ? { ...j, entries: [...j.entries, op.entry] } : j,
       );
@@ -158,7 +173,25 @@ export function DraftCard({
   const [pickerChoreId, setPickerChoreId] = useState<string | null>(null);
   /** Which unnamed slot is being given a name, if any. */
   const [namingEntryId, setNamingEntryId] = useState<string | null>(null);
+  /** Which dated job has its "add a session" form open, if any. */
+  const [composerChoreId, setComposerChoreId] = useState<string | null>(null);
+  /** A job card asked for its sessions form; scroll to it once it's drawn. */
+  const focusRef = useRef<string | null>(null);
+  const [focusNonce, setFocusNonce] = useState(0);
+  /** A save that failed, shown on the job it belongs to — on a phone the top
+   *  of the card is a long scroll away from open studio. */
+  const [rowError, setRowError] = useState<{
+    choreId: string;
+    message: string;
+  } | null>(null);
+  // Two transitions on purpose. Opening, assigning and throwing away lock the
+  // card; pencil edits never do — each one shows at once and saves behind the
+  // scenes, so the next session can go in while the last is still saving.
   const [pending, startTransition] = useTransition();
+  const [saving, startSave] = useTransition();
+  /** Pencil saves, chained so they reach the server in the order they were
+   *  made: a time set on a line must not overtake the insert that creates it. */
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
 
   const [board, apply] = useOptimistic(jobs, applyOp);
 
@@ -169,6 +202,30 @@ export function DraftCard({
   const overRef = useRef<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [overChoreId, setOverChoreId] = useState<string | null>(null);
+
+  // "✏️ Pencil in sessions" on a job card below: open that job's form here.
+  useEffect(() => {
+    const onPencil = (e: Event) => {
+      const choreId = (e as CustomEvent<string>).detail;
+      focusRef.current = choreId;
+      setPickerChoreId(null);
+      setComposerChoreId(choreId);
+      setFocusNonce((n) => n + 1);
+    };
+    window.addEventListener(PENCIL_SESSIONS_EVENT, onPencil);
+    return () => window.removeEventListener(PENCIL_SESSIONS_EVENT, onPencil);
+  }, []);
+
+  // The row only exists once the draft does — which, when the card had to
+  // start one, is a refresh after the event. So try again when it arrives.
+  useEffect(() => {
+    const choreId = focusRef.current;
+    if (!choreId || !draft) return;
+    const row = document.getElementById(`draft-job-${choreId}`);
+    if (!row) return;
+    focusRef.current = null;
+    row.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [draft, focusNonce]);
 
   // Both confirmations time out, so a stray first tap doesn't linger.
   useEffect(() => {
@@ -183,11 +240,25 @@ export function DraftCard({
   }, [confirmingReseed]);
 
   /** Run one draft edit: show it at once, let the server settle it. */
-  const edit = (op: Op, call: () => Promise<{ error: string } | null>) =>
-    startTransition(async () => {
+  const edit = (
+    choreId: string,
+    op: Op,
+    call: () => Promise<{ error: string } | null>,
+  ) =>
+    startSave(async () => {
       apply(op);
-      const result = await call();
-      setError(result?.error ?? null);
+      const run = saveQueue.current.then(call);
+      saveQueue.current = run.catch(() => null);
+      const result = await run.catch(() => ({
+        error: "Couldn't save that — check the connection and try again.",
+      }));
+      if (result?.error) {
+        setRowError({ choreId, message: result.error });
+      } else {
+        setRowError((current) =>
+          current?.choreId === choreId ? null : current,
+        );
+      }
     });
 
   const open = (mode: "blank" | "algorithm") =>
@@ -275,10 +346,17 @@ export function DraftCard({
     if (!current?.started || !commit || !over || over === current.fromChoreId) {
       return;
     }
-    edit({ kind: "move", entryId: current.entryId, toChoreId: over }, () =>
+    edit(over, { kind: "move", entryId: current.entryId, toChoreId: over }, () =>
       movePencil(current.entryId, over),
     );
   };
+
+  // The month's first and last day, so a session's date picker opens on the
+  // month being planned rather than on today.
+  const [year, monthNumber] = month.split("-").map(Number);
+  const monthEnd = `${month.slice(0, 8)}${String(
+    new Date(Date.UTC(year, monthNumber, 0)).getUTCDate(),
+  ).padStart(2, "0")}`;
 
   const penciled = board.flatMap((j) => j.entries);
   const namedPenciled = penciled.filter((e) => e.memberId);
@@ -312,6 +390,13 @@ export function DraftCard({
     .filter((u) => u.open > 0);
   const openSlotTotal = unfilled.reduce((sum, u) => sum + u.open, 0);
 
+  /** Who's already on this job, assigned or penciled — not offered again. */
+  const onThisJob = (job: DraftJob) =>
+    new Set([
+      ...job.published.map((p) => p.memberId),
+      ...job.entries.flatMap((e) => (e.memberId ? [e.memberId] : [])),
+    ]);
+
   /** Who already holds something this month — penciled or real. */
   const busyElsewhere = (choreId: string) =>
     new Set(
@@ -328,6 +413,9 @@ export function DraftCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-semibold">
           {draft ? "Draft — nobody told yet" : "Plan a month"}
+          {saving && (
+            <span className="ml-2 text-xs font-normal text-muted">Saving…</span>
+          )}
         </h2>
         {!draft && (
           <span className="flex shrink-0 flex-wrap gap-2">
@@ -416,7 +504,8 @@ export function DraftCard({
 
           <p className="mb-2 text-xs text-muted">
             Drag a name onto another job to move it, tap ＋ to add someone. Jobs
-            that want a date and time show one per line.
+            with a 🗓 take one session per line — add as many as you like, with
+            a name or without one yet.
           </p>
 
           <ul className="flex select-none flex-col gap-1.5">
@@ -430,8 +519,9 @@ export function DraftCard({
               return (
                 <li
                   key={job.choreId}
+                  id={`draft-job-${job.choreId}`}
                   data-chore-id={job.choreId}
-                  className={`overflow-hidden rounded-xl border transition-colors ${
+                  className={`scroll-mt-24 overflow-hidden rounded-xl border transition-colors ${
                     dropTarget
                       ? "border-accent bg-accent/10"
                       : "border-border bg-surface-2"
@@ -465,6 +555,9 @@ export function DraftCard({
                           className="inline-flex items-center gap-1.5 rounded-full border border-success/40 bg-success/10 px-2.5 py-1 text-xs text-muted"
                         >
                           {p.memberName}
+                          {job.schedulingEnabled && p.scheduledAt && (
+                            <span>· {formatStudioDateTime(p.scheduledAt)}</span>
+                          )}
                           <span className="text-[10px] font-semibold uppercase tracking-wide text-success">
                             assigned
                           </span>
@@ -480,6 +573,8 @@ export function DraftCard({
                           key={entry.entryId}
                           entry={entry}
                           pending={pending}
+                          monthStart={month}
+                          monthEnd={monthEnd}
                           naming={namingEntryId === entry.entryId}
                           onNameToggle={() =>
                             setNamingEntryId(
@@ -490,16 +585,11 @@ export function DraftCard({
                           }
                           members={pickerMembers}
                           busyElsewhere={busyElsewhere(job.choreId)}
-                          onThisJob={
-                            new Set(
-                              job.entries.flatMap((e) =>
-                                e.memberId ? [e.memberId] : [],
-                              ),
-                            )
-                          }
+                          onThisJob={onThisJob(job)}
                           onName={(m) => {
                             setNamingEntryId(null);
                             edit(
+                              job.choreId,
                               {
                                 kind: "name",
                                 entryId: entry.entryId,
@@ -511,6 +601,7 @@ export function DraftCard({
                           }}
                           onSchedule={(date, time) =>
                             edit(
+                              job.choreId,
                               {
                                 kind: "schedule",
                                 entryId: entry.entryId,
@@ -523,8 +614,10 @@ export function DraftCard({
                             )
                           }
                           onRemove={() =>
-                            edit({ kind: "remove", entryId: entry.entryId }, () =>
-                              unpencil(entry.entryId),
+                            edit(
+                              job.choreId,
+                              { kind: "remove", entryId: entry.entryId },
+                              () => unpencil(entry.entryId),
                             )
                           }
                           onDragStart={(e) =>
@@ -547,24 +640,25 @@ export function DraftCard({
                         />
                       ))}
 
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {openSlots > 0 && (
-                          <span className="inline-flex items-center rounded-full border border-dashed border-danger/50 px-2.5 py-1 text-xs text-danger">
-                            {openSlots} to go
-                          </span>
-                        )}
-                        <AddSlotButton
-                          pending={pending}
-                          onAdd={(date, time) => {
+                      {composerChoreId === job.choreId ? (
+                        <SessionComposer
+                          monthStart={month}
+                          monthEnd={monthEnd}
+                          members={pickerMembers}
+                          onThisJob={onThisJob(job)}
+                          busyElsewhere={busyElsewhere(job.choreId)}
+                          disabled={pending}
+                          onAdd={({ date, time, member }) => {
                             const entryId = crypto.randomUUID();
                             edit(
+                              job.choreId,
                               {
                                 kind: "add",
                                 choreId: job.choreId,
                                 entry: {
                                   entryId,
-                                  memberId: null,
-                                  memberName: null,
+                                  memberId: member?.id ?? null,
+                                  memberName: member?.name ?? null,
                                   scheduledAt: date
                                     ? studioToUtcIso(date, time || "09:00")
                                     : null,
@@ -575,24 +669,34 @@ export function DraftCard({
                                   entryId,
                                   month,
                                   job.choreId,
+                                  member?.id ?? null,
                                   date,
                                   time,
                                 ),
                             );
                           }}
+                          onClose={() => setComposerChoreId(null)}
                         />
-                        <PickerToggle
-                          open={pickerChoreId === job.choreId}
-                          label="＋ Add a name"
-                          choreName={job.choreName}
-                          pending={pending}
-                          onToggle={() =>
-                            setPickerChoreId(
-                              pickerChoreId === job.choreId ? null : job.choreId,
-                            )
-                          }
-                        />
-                      </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {openSlots > 0 && (
+                            <span className="inline-flex items-center rounded-full border border-dashed border-danger/50 px-2.5 py-1 text-xs text-danger">
+                              {openSlots} to go
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setComposerChoreId(job.choreId);
+                              setPickerChoreId(null);
+                            }}
+                            disabled={pending}
+                            className="inline-flex items-center rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent transition active:scale-[0.95] disabled:opacity-60"
+                          >
+                            ＋ Add a session
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2.5 pt-1.5">
@@ -623,6 +727,7 @@ export function DraftCard({
                           <button
                             onClick={() =>
                               edit(
+                                job.choreId,
                                 { kind: "remove", entryId: entry.entryId },
                                 () => unpencil(entry.entryId),
                               )
@@ -647,11 +752,12 @@ export function DraftCard({
                         label="＋"
                         choreName={job.choreName}
                         pending={pending}
-                        onToggle={() =>
+                        onToggle={() => {
                           setPickerChoreId(
                             pickerChoreId === job.choreId ? null : job.choreId,
-                          )
-                        }
+                          );
+                          setComposerChoreId(null);
+                        }}
                       />
                     </div>
                   )}
@@ -659,18 +765,12 @@ export function DraftCard({
                   {pickerChoreId === job.choreId && (
                     <MemberPicker
                       members={pickerMembers}
-                      onThisJob={
-                        new Set([
-                          ...job.published.map((p) => p.memberId),
-                          ...job.entries.flatMap((e) =>
-                            e.memberId ? [e.memberId] : [],
-                          ),
-                        ])
-                      }
+                      onThisJob={onThisJob(job)}
                       busyElsewhere={busyElsewhere(job.choreId)}
                       onPick={(m) => {
                         const entryId = crypto.randomUUID();
                         edit(
+                          job.choreId,
                           {
                             kind: "add",
                             choreId: job.choreId,
@@ -687,6 +787,15 @@ export function DraftCard({
                       }}
                       onClose={() => setPickerChoreId(null)}
                     />
+                  )}
+
+                  {rowError?.choreId === job.choreId && (
+                    <p
+                      role="alert"
+                      className="px-3 pb-2.5 text-xs text-danger"
+                    >
+                      {rowError.message}
+                    </p>
                   )}
                 </li>
               );
@@ -736,7 +845,7 @@ export function DraftCard({
               onClick={() =>
                 confirmingPublish ? publish() : setConfirmingPublish(true)
               }
-              disabled={pending || namedPenciled.length === 0}
+              disabled={pending || saving || namedPenciled.length === 0}
               className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
                 confirmingPublish
                   ? "bg-danger text-background"
@@ -753,7 +862,7 @@ export function DraftCard({
               onClick={() =>
                 confirmingReseed ? open("algorithm") : setConfirmingReseed(true)
               }
-              disabled={pending}
+              disabled={pending || saving}
               className={`rounded-xl px-4 py-2.5 text-sm transition active:scale-[0.98] disabled:opacity-60 ${
                 confirmingReseed
                   ? "bg-danger text-background font-semibold"
@@ -766,7 +875,7 @@ export function DraftCard({
             </button>
             <button
               onClick={discard}
-              disabled={pending}
+              disabled={pending || saving}
               className="rounded-xl border border-border px-4 py-2.5 text-sm text-muted transition active:scale-[0.98] disabled:opacity-60"
             >
               Throw it away
@@ -809,74 +918,136 @@ function PickerToggle({
   );
 }
 
-const SLOT_INPUT =
-  "min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs outline-none focus:border-accent";
-
 /**
- * Lay a session down before the name is known: "Oct 3, 10am — nobody yet".
- * This is what lets open studio be planned on the calendar first and staffed
- * afterwards, instead of having to assign someone to reach a date picker.
+ * "＋ Add a session" on a job that takes a date and time (open studio, mainly).
+ *
+ * One form for the whole session — when, and who if that's settled yet — and
+ * it stays open after each add, keeping the time, so a month of sessions goes
+ * in as one run: date, name, add; date, name, add. Before this, every line was
+ * two separate trips ("add a date/time", then "tap to name"), and a name added
+ * first then needed its own "Set time". Leaving "who" empty pencils the
+ * session as "nobody yet", to be staffed later.
  */
-function AddSlotButton({
-  pending,
+function SessionComposer({
+  monthStart,
+  monthEnd,
+  members,
+  onThisJob,
+  busyElsewhere,
+  disabled,
   onAdd,
+  onClose,
 }: {
-  pending: boolean;
-  onAdd: (date: string, time: string) => void;
+  monthStart: string;
+  monthEnd: string;
+  members: PickerEntry[];
+  onThisJob: Set<string>;
+  busyElsewhere: Set<string>;
+  disabled: boolean;
+  onAdd: (session: {
+    date: string;
+    time: string;
+    member: { id: string; name: string } | null;
+  }) => void;
+  onClose: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
+  const [member, setMember] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const [choosing, setChoosing] = useState(false);
+  const [added, setAdded] = useState(0);
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        disabled={pending}
-        className="inline-flex items-center rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-muted transition active:scale-[0.95] disabled:opacity-60"
-      >
-        🗓 Add a date/time
-      </button>
-    );
-  }
+  const add = () => {
+    onAdd({ date, time, member });
+    // Sessions tend to share a time of day, so that stays for the next one.
+    setDate("");
+    setMember(null);
+    setChoosing(false);
+    setAdded((n) => n + 1);
+  };
 
   return (
-    <div className="flex w-full flex-wrap items-center gap-1.5 rounded-lg border border-accent/40 bg-surface px-2 py-2">
-      <input
-        type="date"
-        value={date}
-        onChange={(e) => setDate(e.target.value)}
-        className={SLOT_INPUT}
-        aria-label="Date"
-      />
-      <input
-        type="time"
-        value={time}
-        onChange={(e) => setTime(e.target.value)}
-        className={SLOT_INPUT}
-        aria-label="Time"
-      />
-      <button
-        type="button"
-        onClick={() => {
-          onAdd(date, time);
-          setDate("");
-          setTime("");
-          setOpen(false);
-        }}
-        disabled={pending || !date}
-        className="shrink-0 rounded-lg border border-accent/40 bg-accent/10 px-2 py-1.5 text-[11px] font-semibold text-accent transition active:scale-[0.97] disabled:opacity-60"
-      >
-        Add slot
-      </button>
-      <button
-        type="button"
-        onClick={() => setOpen(false)}
-        className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] font-medium text-muted transition active:scale-[0.97]"
-      >
-        Cancel
-      </button>
+    <div className="rounded-lg border border-accent/40 bg-surface px-2.5 py-2.5">
+      <p className="text-xs font-semibold">
+        {added > 0 ? "Next session" : "New session"}
+      </p>
+      <div className="mt-1.5">
+        <WhenInputs
+          captioned
+          date={date}
+          time={time}
+          minDate={monthStart}
+          maxDate={monthEnd}
+          onDate={setDate}
+          onTime={setTime}
+        />
+      </div>
+
+      <div className="mt-2">
+        <span className="text-[11px] font-medium text-muted">Who</span>
+        {member ? (
+          <div className="mt-0.5 flex items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-2">
+            <span className="min-w-0 truncate text-sm font-medium">
+              {member.name}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setMember(null);
+                setChoosing(true);
+              }}
+              className="shrink-0 text-xs font-medium text-muted underline-offset-2 hover:underline"
+            >
+              Change
+            </button>
+          </div>
+        ) : choosing ? (
+          <MemberPicker
+            embedded
+            members={members}
+            onThisJob={onThisJob}
+            busyElsewhere={busyElsewhere}
+            onPick={(m) => {
+              setMember(m);
+              setChoosing(false);
+            }}
+            onClose={() => setChoosing(false)}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setChoosing(true)}
+            className="mt-0.5 w-full rounded-lg border border-dashed border-border px-2.5 py-2 text-left text-sm text-muted transition active:scale-[0.99]"
+          >
+            Pick someone — or leave it open for now
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={add}
+          disabled={disabled || (!date && !member)}
+          className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-background transition active:scale-[0.97] disabled:opacity-50"
+        >
+          Add session
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted transition active:scale-[0.97]"
+        >
+          Done
+        </button>
+        {added > 0 && (
+          <span className="text-xs text-success">
+            {added} added ✓ — next one?
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -888,6 +1059,8 @@ function AddSlotButton({
 function ScheduledLine({
   entry,
   pending,
+  monthStart,
+  monthEnd,
   naming,
   members,
   onThisJob,
@@ -903,6 +1076,8 @@ function ScheduledLine({
 }: {
   entry: DraftEntry;
   pending: boolean;
+  monthStart: string;
+  monthEnd: string;
   naming: boolean;
   members: PickerEntry[];
   onThisJob: Set<string>;
@@ -975,51 +1150,47 @@ function ScheduledLine({
       </div>
 
       {editingTime ? (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className={SLOT_INPUT}
-            aria-label="Date"
+        <div className="mt-1.5">
+          <WhenInputs
+            date={date}
+            time={time}
+            minDate={monthStart}
+            maxDate={monthEnd}
+            onDate={setDate}
+            onTime={setTime}
           />
-          <input
-            type="time"
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
-            className={SLOT_INPUT}
-            aria-label="Time"
-          />
-          <button
-            onClick={() => {
-              onSchedule(date, time);
-              setEditingTime(false);
-            }}
-            disabled={pending || !date}
-            className="shrink-0 rounded-lg border border-accent/40 bg-accent/10 px-2 py-1.5 text-[11px] font-semibold text-accent transition active:scale-[0.97] disabled:opacity-60"
-          >
-            Save
-          </button>
-          {entry.scheduledAt && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <button
               onClick={() => {
-                setDate("");
-                setTime("");
-                onSchedule("", "");
+                onSchedule(date, time);
                 setEditingTime(false);
               }}
-              disabled={pending}
-              className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] font-medium text-danger transition active:scale-[0.97] disabled:opacity-60"
+              disabled={pending || !date}
+              className="shrink-0 rounded-lg border border-accent/40 bg-accent/10 px-2 py-1.5 text-[11px] font-semibold text-accent transition active:scale-[0.97] disabled:opacity-60"
             >
-              Clear
+              Save
             </button>
-          )}
-          <button
-            onClick={() => setEditingTime(false)}
-            className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] font-medium text-muted transition active:scale-[0.97]"
-          >
-            Cancel
-          </button>
+            {entry.scheduledAt && (
+              <button
+                onClick={() => {
+                  setDate("");
+                  setTime("");
+                  onSchedule("", "");
+                  setEditingTime(false);
+                }}
+                disabled={pending}
+                className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] font-medium text-danger transition active:scale-[0.97] disabled:opacity-60"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={() => setEditingTime(false)}
+              className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] font-medium text-muted transition active:scale-[0.97]"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       ) : (
         <div className="mt-1 flex items-center justify-between gap-2">
@@ -1040,6 +1211,7 @@ function ScheduledLine({
 
       {naming && !entry.memberId && (
         <MemberPicker
+          embedded
           members={members}
           onThisJob={onThisJob}
           busyElsewhere={busyElsewhere}
@@ -1063,6 +1235,7 @@ function MemberPicker({
   busyElsewhere,
   onPick,
   onClose,
+  embedded = false,
 }: {
   members: PickerEntry[];
   /** Already on this job — hidden from the list. */
@@ -1071,6 +1244,8 @@ function MemberPicker({
   busyElsewhere: Set<string>;
   onPick: (member: { id: string; name: string }) => void;
   onClose: () => void;
+  /** Inside a card with its own padding: no divider, no extra inset. */
+  embedded?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -1084,7 +1259,13 @@ function MemberPicker({
     );
 
   return (
-    <div className="select-text border-t border-border px-3 py-2.5">
+    <div
+      className={
+        embedded
+          ? "mt-1.5 select-text"
+          : "select-text border-t border-border px-3 py-2.5"
+      }
+    >
       <input
         autoFocus
         value={query}
@@ -1133,7 +1314,7 @@ function MemberPicker({
         onClick={onClose}
         className="mt-2 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition active:scale-[0.97]"
       >
-        Done
+        {embedded ? "Cancel" : "Done"}
       </button>
     </div>
   );

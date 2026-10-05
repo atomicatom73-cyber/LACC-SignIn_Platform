@@ -304,6 +304,22 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Credits that count for a month: unused ones, plus any already spent on it.
+ * Assigning part of a month (open studio first, the rest later) spends credits
+ * at that first assign; without the second half of this, those members would
+ * be back in the draw for the rest of the month they'd paid to sit out.
+ */
+function creditsForMonth(
+  supabase: Awaited<ReturnType<typeof requireOfficer>>["supabase"],
+  month: string,
+) {
+  return supabase
+    .from("chore_credits")
+    .select("member_id")
+    .or(`used_month.is.null,used_month.eq.${month}`);
+}
+
+/**
  * Open (or re-seed) a draft for a month.
  *
  * "blank" opens an empty one — the way to pencil a couple of open-studio
@@ -364,7 +380,7 @@ export async function startDraft(
         .select("chore_id, member_id")
         .eq("month", prevMonth),
       supabase.from("absences").select("member_id").eq("month", month),
-      supabase.from("chore_credits").select("member_id").is("used_month", null),
+      creditsForMonth(supabase, month),
       supabase
         .from("chore_assignments")
         .select("chore_id, member_id")
@@ -465,13 +481,15 @@ export async function pencilMember(
 }
 
 /**
- * Pencil an empty slot onto a job — a date and time with nobody on it yet, for
- * laying out the month's open-studio sessions before the names are settled.
+ * Pencil a session onto a job — a date and time, with a name or without one
+ * yet ("Oct 3, 10am — TBD"), so the month's open-studio sessions can be laid
+ * out one after another before anyone is officially on the hook.
  */
 export async function pencilSlot(
   entryId: string,
   month: string,
   choreId: string,
+  memberId: string | null,
   date: string,
   time: string,
 ): Promise<{ error: string } | null> {
@@ -488,10 +506,15 @@ export async function pencilSlot(
     id: entryId,
     month,
     chore_id: choreId,
-    member_id: null,
+    member_id: memberId || null,
     scheduled_at: scheduled,
   });
-  if (error) return { error: error.message };
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "They are already penciled onto this job." };
+    }
+    return { error: error.message };
+  }
 
   revalidatePath("/officer/chores");
   return null;
@@ -639,7 +662,7 @@ export async function publishDraft(month: string): Promise<FormState> {
         .eq("active", true)
         .eq("role", "member"),
       supabase.from("absences").select("member_id").eq("month", month),
-      supabase.from("chore_credits").select("member_id").is("used_month", null),
+      creditsForMonth(supabase, month),
     ]);
 
   const firstError =
@@ -745,6 +768,26 @@ export async function publishDraft(month: string): Promise<FormState> {
   const alreadySpent = new Set(
     (spentThisMonth.data ?? []).map((c) => c.member_id),
   );
+
+  // Someone whose credit went on an earlier assign this month but who has a
+  // job now didn't sit the month out after all — give it back.
+  for (const memberId of alreadySpent) {
+    if (!working.has(memberId)) continue;
+    const { data: spent, error: findError } = await supabase
+      .from("chore_credits")
+      .select("id")
+      .eq("member_id", memberId)
+      .eq("used_month", month)
+      .limit(1)
+      .maybeSingle();
+    if (findError) return { error: findError.message };
+    if (!spent) continue;
+    const { error } = await supabase
+      .from("chore_credits")
+      .update({ used_month: null })
+      .eq("id", spent.id);
+    if (error) return { error: error.message };
+  }
 
   for (const { id: memberId } of creditSpends) {
     if (alreadySpent.has(memberId)) continue;

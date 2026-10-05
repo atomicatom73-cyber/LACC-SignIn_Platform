@@ -9,9 +9,11 @@ import {
 } from "react";
 import { RichText } from "@/components/RichText";
 import { RichTextInput } from "@/components/RichTextInput";
+import { WhenInputs } from "@/components/WhenInputs";
 import type { ChoreInterval } from "@/lib/types";
 import { INTERVAL_OPTIONS, intervalBadge } from "@/lib/chores";
 import { formatStudioDateTime, studioDateTimeParts } from "@/lib/studio";
+import { PENCIL_SESSIONS_EVENT } from "./DraftCard";
 import { SchedulingToggle } from "./SchedulingToggle";
 import {
   assignChore,
@@ -21,6 +23,7 @@ import {
   setAssignmentSchedule,
   setAssignmentStatus,
   setChorePaused,
+  startDraft,
   updateChore,
 } from "./actions";
 
@@ -31,6 +34,8 @@ export type BoardAssignee = {
   status: "pending" | "completed";
   /** When they said they'd do it; only shown for scheduled jobs. */
   scheduledAt: string | null;
+  /** When they said they finished — members enter it when they tick a job off. */
+  completedAt: string | null;
 };
 
 /**
@@ -74,10 +79,16 @@ export function ChoreBoard({
   month,
   chores,
   members,
+  planning,
+  draftOpen,
 }: {
   month: string; // "YYYY-MM-01"
   chores: BoardChore[];
   members: PickerMember[];
+  /** This month or later — the draft card above is there to pencil into. */
+  planning: boolean;
+  /** A draft is already open for the month. */
+  draftOpen: boolean;
 }) {
   // What's still open this month, counted the same way the reshuffle draft
   // counts it: slots, and the jobs they're spread across. Paused jobs aren't
@@ -126,6 +137,8 @@ export function ChoreBoard({
             month={month}
             chore={chore}
             members={members}
+            planning={planning}
+            draftOpen={draftOpen}
           />
         ))}
       </div>
@@ -137,10 +150,14 @@ function ChoreCard({
   month,
   chore,
   members,
+  planning,
+  draftOpen,
 }: {
   month: string;
   chore: BoardChore;
   members: PickerMember[];
+  planning: boolean;
+  draftOpen: boolean;
 }) {
   const [assignState, assignAction, assignPending] = useActionState(
     assignChore,
@@ -323,6 +340,11 @@ function ChoreCard({
                       </button>
                     </span>
                   </div>
+                  {done && a.completedAt && (
+                    <p className="mt-0.5 text-xs text-muted">
+                      Finished {formatStudioDateTime(a.completedAt)}
+                    </p>
+                  )}
                   {chore.schedulingEnabled && (
                     <ScheduleEditor
                       assignmentId={a.assignmentId}
@@ -355,6 +377,16 @@ function ChoreCard({
               ))}
             </ul>
           </div>
+        )}
+
+        {/* "Assign" below emails straight away, and only then can a time
+            be set — so for a dated job, offer the draft right here. */}
+        {planning && chore.schedulingEnabled && !chore.paused && (
+          <PencilSessionsPrompt
+            month={month}
+            choreId={chore.id}
+            draftOpen={draftOpen}
+          />
         )}
 
         {!chore.paused && candidates.length > 0 && (
@@ -488,8 +520,59 @@ function ChoreCard({
   );
 }
 
-const SCHEDULE_INPUT =
-  "min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs outline-none focus:border-accent";
+/**
+ * The way into the draft from a dated job's card. The coordinator kept
+ * reaching for "Assign" here, which emails the member at once and is the only
+ * way to a date picker on this card — one session at a time, each one told
+ * before the month was settled. This opens the month's draft (starting a
+ * blank one if needed) with this job's "new session" form ready.
+ */
+function PencilSessionsPrompt({
+  month,
+  choreId,
+  draftOpen,
+}: {
+  month: string;
+  choreId: string;
+  draftOpen: boolean;
+}) {
+  const [opening, startOpening] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const open = () =>
+    startOpening(async () => {
+      setError(null);
+      if (!draftOpen) {
+        const result = await startDraft(month, "blank");
+        if (result?.error) {
+          setError(result.error);
+          return;
+        }
+      }
+      window.dispatchEvent(
+        new CustomEvent(PENCIL_SESSIONS_EVENT, { detail: choreId }),
+      );
+    });
+
+  return (
+    <div className="mt-3 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2.5">
+      <p className="text-xs text-accent">
+        Planning the month? Pencil the sessions in first — dates, times and
+        names, as many as you like. Nobody is emailed until you assign them
+        officially.
+      </p>
+      <button
+        type="button"
+        onClick={open}
+        disabled={opening}
+        className="mt-2 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-background transition active:scale-[0.97] disabled:opacity-60"
+      >
+        {opening ? "Opening the draft…" : "✏️ Pencil in sessions"}
+      </button>
+      {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+    </div>
+  );
+}
 
 /**
  * When this member will do the job — officers set or clear it here; the member
@@ -546,21 +629,8 @@ function ScheduleEditor({
 
   return (
     <div className="mt-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className={SCHEDULE_INPUT}
-          aria-label="Date"
-        />
-        <input
-          type="time"
-          value={time}
-          onChange={(e) => setTime(e.target.value)}
-          className={SCHEDULE_INPUT}
-          aria-label="Time"
-        />
+      <WhenInputs date={date} time={time} onDate={setDate} onTime={setTime} />
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <button
           onClick={() => save(date, time)}
           disabled={pending || !date}

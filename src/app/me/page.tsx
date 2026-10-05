@@ -140,6 +140,7 @@ export default async function MePage() {
       choreInterval: a.chores?.interval ?? "month",
       choreScheduling: a.chores?.scheduling_enabled ?? false,
       scheduledAt: a.scheduled_at,
+      completedAt: a.completed_at,
     }),
   );
 

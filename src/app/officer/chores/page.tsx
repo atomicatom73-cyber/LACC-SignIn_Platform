@@ -20,6 +20,7 @@ type AssignmentRow = {
   member_id: string;
   status: "pending" | "completed";
   scheduled_at: string | null;
+  completed_at: string | null;
   members: { full_name: string } | null;
 };
 
@@ -68,7 +69,7 @@ export default async function OfficerChoresPage({
       // members!…: both member_id and assigned_by reference members, so the
       // embed must name its FK or PostgREST rejects it as ambiguous.
       .select(
-        "id, chore_id, member_id, status, scheduled_at, members!chore_assignments_member_id_fkey(full_name)",
+        "id, chore_id, member_id, status, scheduled_at, completed_at, members!chore_assignments_member_id_fkey(full_name)",
       )
       .eq("month", month)
       .order("created_at", { ascending: true }),
@@ -92,7 +93,13 @@ export default async function OfficerChoresPage({
       .select("id, chore_id, member_id, scheduled_at, members(full_name)")
       .eq("month", month)
       .order("created_at", { ascending: true }),
-    supabase.from("chore_credits").select("member_id").is("used_month", null),
+    // Unused credits, plus any already spent on this month: assigning part
+    // of a month (open studio first, say) spends them, and those members
+    // still sit the rest of it out.
+    supabase
+      .from("chore_credits")
+      .select("member_id")
+      .or(`used_month.is.null,used_month.eq.${month}`),
   ]);
 
   const chores = (choresRes.data ?? []) as Chore[];
@@ -122,6 +129,7 @@ export default async function OfficerChoresPage({
       memberName: a.members?.full_name ?? "Unknown member",
       status: a.status,
       scheduledAt: a.scheduled_at,
+      completedAt: a.completed_at,
     });
     assigneesByChore.set(a.chore_id, list);
   }
@@ -191,6 +199,7 @@ export default async function OfficerChoresPage({
       published: (assigneesByChore.get(c.id) ?? []).map((a) => ({
         memberId: a.memberId,
         memberName: a.memberName,
+        scheduledAt: a.scheduledAt,
       })),
       entries: (penciledByChore.get(c.id) ?? []).map((p) => ({
         entryId: p.entryId,
@@ -337,7 +346,13 @@ export default async function OfficerChoresPage({
       )}
 
       <section className="mt-5">
-        <ChoreBoard month={month} chores={boardChores} members={members} />
+        <ChoreBoard
+          month={month}
+          chores={boardChores}
+          members={members}
+          planning={month >= currentMonth}
+          draftOpen={draftRow !== null}
+        />
       </section>
     </main>
   );
