@@ -1,0 +1,42 @@
+# Deploys to the studio's Vercel project (team lacc1, project lacc-studio).
+# That account has no GitHub connection, so Vercel can't watch the repo itself —
+# this workflow does it with a studio token stored as the VERCEL_TOKEN secret.
+#   push to main    → production (laccstudio.org)
+#   push to preview → preview deployment (URL shown in the run summary)
+name: Deploy to Vercel
+
+on:
+  push:
+    branches: [main, preview]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Link to the studio project
+        run: npx --yes vercel@latest link --yes --project lacc-studio --scope lacc1 --token "$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy
+        run: |
+          set -o pipefail
+          # `vercel link` can drop a pulled .env.local here — never upload it
+          rm -f .env .env.*
+          if [ "$GITHUB_REF_NAME" = "main" ]; then PROD=--prod; else PROD=; fi
+          npx --yes vercel@latest deploy $PROD --yes --scope lacc1 --token "$VERCEL_TOKEN" 2>&1 | tee deploy.log
+          url=$(grep -oE 'https://lacc-studio-[a-z0-9-]+\.vercel\.app' deploy.log | head -1)
+          echo "Deployed: $url" | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
