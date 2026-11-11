@@ -8,9 +8,12 @@
 # someone with the studio's Supabase login to restore it, so this runs one tiny
 # read-only query a day instead.
 #
-# Uses the same SUPABASE_DB_URL secret (session pooler URL) as deploy.yml, and
-# studio_pulse() because it is cheap and read-only. Only the timestamp is
-# printed, because this repo is public and so are its Actions logs.
+# It calls studio_pulse() twice, because Supabase doesn't say exactly what it
+# counts as activity: once through the REST API, the way browsers reach it
+# (SUPABASE_URL + SUPABASE_ANON_KEY secrets), and once as a direct database
+# query (SUPABASE_DB_URL, the session pooler URL deploy.yml uses). The function
+# is cheap and read-only. Only the timestamp is printed, because this repo is
+# public and so are its Actions logs. The job fails only if both calls fail.
 name: Keep Supabase awake
 
 on:
@@ -22,9 +25,30 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Query the database
+      - name: Ping Supabase
         run: |
-          now=$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -tAc "select public.studio_pulse()->>'now'")
-          echo "Supabase answered at $now" | tee -a "$GITHUB_STEP_SUMMARY"
+          set -o pipefail
+          ok=0
+
+          if now=$(curl -sf -X POST "$SUPABASE_URL/rest/v1/rpc/studio_pulse" \
+                -H "apikey: $SUPABASE_ANON_KEY" \
+                -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+                -H "Content-Type: application/json" -d '{}' | jq -r .now); then
+            echo "REST API answered at $now" | tee -a "$GITHUB_STEP_SUMMARY"
+            ok=1
+          else
+            echo "::warning::REST API ping failed"
+          fi
+
+          if now=$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -tAc "select public.studio_pulse()->>'now'"); then
+            echo "Database answered at $now" | tee -a "$GITHUB_STEP_SUMMARY"
+            ok=1
+          else
+            echo "::warning::Direct database query failed"
+          fi
+
+          [ "$ok" = 1 ]
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
