@@ -1,0 +1,30 @@
+# Keeps the studio's free-plan Supabase project from pausing.
+#
+# Supabase pauses a free project after about a week with no activity. Normally
+# the app keeps it busy, but when the Vercel side is down (as it was from
+# 2026-11-08 to 2026-12-08, blocked for going over the Hobby CPU allowance)
+# nothing touches the database: the kiosk shows Vercel's error page, and the
+# daily calendar/members-sheet crons run on Vercel too. A paused project needs
+# someone with the studio's Supabase login to restore it, so this runs one tiny
+# read-only query a day instead.
+#
+# Uses the same SUPABASE_DB_URL secret (session pooler URL) as deploy.yml, and
+# studio_pulse() because it is cheap and read-only. Only the timestamp is
+# printed, because this repo is public and so are its Actions logs.
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: "17 15 * * *" # daily, ~8-9am in Denver
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query the database
+        run: |
+          now=$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -tAc "select public.studio_pulse()->>'now'")
+          echo "Supabase answered at $now" | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
