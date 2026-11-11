@@ -19,15 +19,11 @@ import { applyQueuedShifts, type RosterMember } from "./queued-roster";
 export type { RosterMember };
 
 /**
- * How often the tablet re-asks the server who's in the studio.
- *
- * Nothing pushes a sign-in from someone's phone to this tablet, and the kiosk
- * screen is left open all day — so without a poll these cards drift as far out
- * of date as the last time anybody touched them. That gap is what sends someone
- * to a card reading "Tap to sign in" when they're already signed in and only
- * want to go home.
+ * How long to wait before asking for a fresh roster again when the last ask
+ * didn't bring the cards in line with the studio's fingerprint. Normally one
+ * refresh settles it; this only matters if something keeps them apart.
  */
-const ROSTER_POLL_MS = 20_000;
+const REFRESH_RETRY_MS = 60_000;
 
 type Toast = { text: string; ms: number };
 
@@ -43,7 +39,14 @@ function formatNowClock(): string {
   });
 }
 
-export function RosterGrid({ members }: { members: RosterMember[] }) {
+export function RosterGrid({
+  members,
+  rosterStamp,
+}: {
+  members: RosterMember[];
+  /** studio_pulse()'s roster fingerprint as of this render; null if unread. */
+  rosterStamp: string | null;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -58,7 +61,12 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
   const { pending: queued, refresh: refreshQueue } = useOfflineQueue();
   // Whether the studio actually answers — not `navigator.onLine`, which reads
   // true on the studio's own wifi with a dead uplink. See lib/connectivity.
-  const { offline, isRisky, lastCheckedAt } = useConnection();
+  const {
+    offline,
+    isRisky,
+    lastCheckedAt,
+    roster: liveStamp,
+  } = useConnection();
 
   // Taps taken while offline aren't in the roster the server sent — and when
   // the page is served from the service worker cache, that roster can be hours
@@ -87,48 +95,51 @@ export function RosterGrid({ members }: { members: RosterMember[] }) {
     setToast({ text, ms });
   }
 
-  // Re-ask the server on a slow loop, so a sign-in from someone's phone reaches
-  // these cards without anyone reloading the tablet. Held off while a tap is in
-  // flight or a dialog is open — see the effect below.
-  const interacting =
-    pending || pinFor !== null || accountFor !== null || staleFor !== null;
-  const interactingRef = useRef(false);
-  useEffect(() => {
-    interactingRef.current = interacting;
-  }, [interacting]);
-
-  // Read inside the poll below, which is set up once and must not close over a
-  // stale value — a refresh fired while cut off is the expensive mistake here.
+  // Read inside the tap handler, which runs in a transition that must not close
+  // over a stale value.
   const offlineRef = useRef(false);
   useEffect(() => {
     offlineRef.current = offline;
   }, [offline]);
 
+  // Keep the cards current without anyone reloading the tablet. Nothing pushes
+  // a sign-in from someone's phone to this screen, and it's left open all day,
+  // so without this the cards drift as far out of date as the last tap on this
+  // tablet — which is what sends someone to a card reading "Tap to sign in"
+  // when they're already in and only want to go home.
+  //
+  // The connection probe (lib/connectivity) asks Supabase every 20s for a
+  // fingerprint of the roster; this asks Vercel for a fresh page only when that
+  // fingerprint differs from the one this render was built from. Re-rendering
+  // the page every 20s regardless is what used up the studio's free Vercel
+  // allowance in Nov 2026 and took the site down for a month — don't put an
+  // unconditional router.refresh() loop back here.
+  //
+  // `lastCheckedAt` is in the deps so a mismatch that survives a refresh is
+  // re-examined after each probe (rate-limited by REFRESH_RETRY_MS).
+  const interacting =
+    pending || pinFor !== null || accountFor !== null || staleFor !== null;
+  const requestedRef = useRef<{ stamp: string; at: number } | null>(null);
   useEffect(() => {
-    const sync = () => {
-      // Mid-tap the grid would reshuffle under a finger, and a hidden tab has
-      // nobody to show it to. Cut off, a failed RSC fetch turns into a full
-      // browser navigation — which on a captive portal hands the tablet to the
-      // portal's own page — and the queue overlay already covers this tablet's
-      // own taps, which are the only ones it can know about while cut off.
-      if (document.visibilityState !== "visible") return;
-      if (interactingRef.current || offlineRef.current) return;
-      router.refresh();
-    };
-
-    const id = setInterval(sync, ROSTER_POLL_MS);
-    const onVisible = () => {
-      // A tablet waking from sleep is the longest gap of all.
-      if (document.visibilityState === "visible") sync();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("online", sync);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("online", sync);
-    };
-  }, [router]);
+    if (!liveStamp || liveStamp === rosterStamp) return;
+    // Mid-tap the grid would reshuffle under a finger, and a hidden tab has
+    // nobody to show it to. Cut off, a failed RSC fetch turns into a full
+    // browser navigation — which on a captive portal hands the tablet to the
+    // portal's own page — and the queue overlay already covers this tablet's
+    // own taps, which are the only ones it can know about while cut off.
+    if (interacting || offline) return;
+    if (document.visibilityState !== "visible") return;
+    const last = requestedRef.current;
+    if (
+      last &&
+      last.stamp === liveStamp &&
+      Date.now() - last.at < REFRESH_RETRY_MS
+    ) {
+      return;
+    }
+    requestedRef.current = { stamp: liveStamp, at: Date.now() };
+    router.refresh();
+  }, [liveStamp, rosterStamp, lastCheckedAt, interacting, offline, router]);
 
   /**
    * Save a tap on the tablet for later. Keeps the direction the card was

@@ -13,6 +13,14 @@ export default async function KioskPage() {
   // Anyone who forgot to sign out stays signed in until end of that day.
   await supabase.rpc("close_stale_shifts");
 
+  // The fingerprint the tablet compares against studio_pulse() to decide when
+  // to ask for a fresh page (see RosterGrid). Read it BEFORE the roster: if
+  // someone signs in between the two reads, the cards are newer than the stamp
+  // and the tablet refreshes once more, rather than holding a stamp that claims
+  // a change these cards don't show.
+  const { data: pulse } = await supabase.rpc("studio_pulse");
+  const rosterStamp = (pulse as { roster?: string } | null)?.roster ?? null;
+
   const { data: members } = await supabase
     .from("members")
     .select("id, full_name, pin, user_id")
@@ -83,7 +91,7 @@ export default async function KioskPage() {
       </div>
 
       <div className="mt-6 flex-1">
-        <RosterGrid members={roster} />
+        <RosterGrid members={roster} rosterStamp={rosterStamp} />
       </div>
     </main>
   );

@@ -824,6 +824,44 @@ $$;
 
 grant execute on function public.close_stale_shifts() to authenticated;
 
+-- Heartbeat that open screens ask Supabase for directly (anon), so an idle
+-- kiosk costs Vercel nothing: the DB clock for the offline queue's drift
+-- correction, plus a fingerprint of what the kiosk cards show. The tablet asks
+-- Vercel for a fresh page only when the fingerprint changes. Full rationale in
+-- migrations/20261110000000_studio_pulse.sql.
+create or replace function public.studio_pulse()
+returns json
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select json_build_object(
+    'now', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'roster', md5(
+      (now() at time zone 'America/Denver')::date::text || '|' ||
+      coalesce((
+        select string_agg(
+                 m.id::text || ':' || m.full_name || ':' ||
+                 (coalesce(m.pin, '') <> '')::text || ':' ||
+                 (m.user_id is not null)::text || ':' ||
+                 coalesce(s.signed_in_at::text, ''),
+                 ',' order by m.id
+               )
+          from public.members m
+          left join public.shifts s
+            on s.member_id = m.id
+           and s.signed_out_at is null
+         where m.active
+           and m.role = 'member'
+      ), '')
+    )
+  );
+$$;
+
+revoke all on function public.studio_pulse() from public;
+grant execute on function public.studio_pulse() to anon, authenticated, service_role;
+
 -- Optional (requires the pg_cron extension, Dashboard → Database → Extensions):
 -- select cron.schedule('close-stale-shifts', '5 0 * * *', $$select public.close_stale_shifts()$$);
 

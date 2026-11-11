@@ -4,15 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { isOffline, rememberServerTime } from "./offline-queue";
 
 /**
- * Whether the studio's server is actually answering, and how long it has been
- * since it last did.
+ * Whether the studio can actually be reached, and how long since it last could.
  *
  * `navigator.onLine` is not enough to put in front of someone about to sign in.
  * It reports "online" whenever there is *a* network — the studio's wifi with a
- * dead uplink, a captive portal, a phone showing one bar that passes nothing,
- * or the app itself being down all read as connected. Those are exactly the
- * situations where a tap gets queued and the person walks away believing the
- * studio has them. So this asks `/api/now` and believes the answer.
+ * dead uplink, a captive portal, a phone showing one bar that passes nothing.
+ * Those are exactly the situations where a tap gets queued and the person walks
+ * away believing the studio has them. So this asks, and believes the answer.
  *
  * The second half — `verifiedAt` — matters as much as the first. A device that
  * cannot reach the studio also cannot learn what other devices did, so its
@@ -20,8 +18,22 @@ import { isOffline, rememberServerTime } from "./offline-queue";
  * the honest measure of how much its screen can be trusted, and it's what
  * decides whether a tap is worth interrupting someone over.
  *
- * One probe is shared by every component on the page: the roster, the clock
- * card and the banner all read the same reading rather than each polling.
+ * WHO IT ASKS: Supabase's `studio_pulse()` RPC, straight from the browser — not
+ * an app route. The kiosk sits open around the clock, and when this probe (and
+ * the roster refresh) went to Vercel every 20s, it used up the studio's free
+ * Fluid Active CPU allowance and the site was disabled for a month (Nov 2026).
+ * Supabase doesn't bill per request, and it's where every sign-in lands anyway,
+ * so it's a fair stand-in for "the studio". The one case it misses is the app
+ * itself being down while the database is up; the tap paths cover that by
+ * checking `/api/now` via `serverReachable()` before deciding to queue.
+ *
+ * The answer also carries the database clock (for the offline queue's drift
+ * correction) and a fingerprint of the kiosk roster, which RosterGrid compares
+ * with its own to decide when a fresh page is actually needed.
+ *
+ * One shared poll serves every component on the page: the banner, the roster
+ * and the clock card all read the same reading. It runs only while at least one
+ * mounted caller asks for it (see `poll` below) and the tab is visible.
  */
 
 /** How often to re-ask while a sign-in screen is open and visible. */
@@ -34,21 +46,27 @@ const PROBE_MS = 20_000;
  */
 export const STALE_MS = 5 * 60_000;
 
+const PULSE_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/rpc/studio_pulse`;
+const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
 type Connection = {
   /** null before the first answer — assume reachable rather than cry wolf. */
   reachable: boolean | null;
   /** Device clock at the last probe that answered, or null if none has. */
   verifiedAt: number | null;
+  /** studio_pulse()'s roster fingerprint from the last answer. */
+  roster: string | null;
 };
 
-let state: Connection = { reachable: null, verifiedAt: null };
+let state: Connection = { reachable: null, verifiedAt: null, roster: null };
 const listeners = new Set<() => void>();
 let inFlight: Promise<boolean> | null = null;
 
 function publish(next: Connection) {
   if (
     next.reachable === state.reachable &&
-    next.verifiedAt === state.verifiedAt
+    next.verifiedAt === state.verifiedAt &&
+    next.roster === state.roster
   ) {
     return;
   }
@@ -59,36 +77,47 @@ function publish(next: Connection) {
 /**
  * Ask the studio whether it's there. Concurrent callers share one request.
  *
- * A successful probe doubles as a clock reading: `/api/now` exists for the
- * offline queue's timestamps, and taking the skew from the midpoint of the
- * round trip keeps a queued tap stamped correctly. Free, and it keeps the two
- * from drifting apart.
+ * A successful probe doubles as a clock reading: taking the skew from the
+ * midpoint of the round trip keeps a queued tap stamped correctly.
  */
 export function probeConnection(): Promise<boolean> {
   if (inFlight) return inFlight;
 
   // A definitive no from the browser — no point spending a request on it.
   if (isOffline()) {
-    publish({ reachable: false, verifiedAt: state.verifiedAt });
+    publish({ ...state, reachable: false });
     return Promise.resolve(false);
   }
 
   inFlight = (async () => {
     const startedAt = Date.now();
     try {
-      const res = await fetch("/api/now", { cache: "no-store" });
+      const res = await fetch(PULSE_URL, {
+        method: "POST",
+        headers: {
+          apikey: ANON_KEY,
+          Authorization: `Bearer ${ANON_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+        cache: "no-store",
+      });
       if (!res.ok) {
-        publish({ reachable: false, verifiedAt: state.verifiedAt });
+        publish({ ...state, reachable: false });
         return false;
       }
-      const body = (await res.json()) as { now?: string };
+      const body = (await res.json()) as { now?: string; roster?: string };
       if (body?.now) {
         rememberServerTime(body.now, startedAt + (Date.now() - startedAt) / 2);
       }
-      publish({ reachable: true, verifiedAt: Date.now() });
+      publish({
+        reachable: true,
+        verifiedAt: Date.now(),
+        roster: body?.roster ?? state.roster,
+      });
       return true;
     } catch {
-      publish({ reachable: false, verifiedAt: state.verifiedAt });
+      publish({ ...state, reachable: false });
       return false;
     } finally {
       inFlight = null;
@@ -98,11 +127,55 @@ export function probeConnection(): Promise<boolean> {
   return inFlight;
 }
 
+// ---------------------------------------------------------------------------
+// The shared poll — one timer however many components want it.
+// ---------------------------------------------------------------------------
+
+let pollers = 0;
+let timer: ReturnType<typeof setInterval> | null = null;
+
+function pollOnce() {
+  // Nobody is looking at a hidden tab, and a sleeping tablet shouldn't be
+  // waking itself to poll.
+  if (document.visibilityState !== "visible") return;
+  void probeConnection();
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === "visible") pollOnce();
+}
+
+function startPolling() {
+  pollers += 1;
+  if (pollers > 1) return;
+  // Take the first reading off the synchronous effect path so the server
+  // render and the first client render still agree.
+  queueMicrotask(pollOnce);
+  timer = setInterval(pollOnce, PROBE_MS);
+  // The browser's own signals are still the fastest hint that something
+  // changed — they just aren't trusted on their own.
+  window.addEventListener("online", pollOnce);
+  window.addEventListener("offline", pollOnce);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+}
+
+function stopPolling() {
+  pollers = Math.max(0, pollers - 1);
+  if (pollers > 0) return;
+  if (timer) clearInterval(timer);
+  timer = null;
+  window.removeEventListener("online", pollOnce);
+  window.removeEventListener("offline", pollOnce);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+}
+
 export type ConnectionState = {
   /** Confident the studio can't be reached. Optimistic until proven otherwise. */
   offline: boolean;
   /** Wall-clock time of the last answer, for "last checked 2:14 PM". */
   lastCheckedAt: number | null;
+  /** The roster fingerprint from the last answer (see studio_pulse). */
+  roster: string | null;
   /**
    * Offline *and* out of date enough that this screen may be contradicted by
    * another device — the case worth stopping someone for. Read at tap time so
@@ -114,10 +187,13 @@ export type ConnectionState = {
 };
 
 /**
- * Subscribe to the shared reading. Mounting this starts the poll; the last
- * component to unmount stops it.
+ * Subscribe to the shared reading. With `poll` (the default) this caller keeps
+ * the 20s probe running while it's mounted; pass `poll: false` to just read
+ * whatever the last probe found without asking for more.
  */
-export function useConnection(): ConnectionState {
+export function useConnection({
+  poll = true,
+}: { poll?: boolean } = {}): ConnectionState {
   const [snapshot, setSnapshot] = useState<Connection>(state);
   // Staleness grows without any event firing, so re-render on a slow tick to
   // keep "last checked" and the risky threshold current on screen.
@@ -126,40 +202,20 @@ export function useConnection(): ConnectionState {
   useEffect(() => {
     const onChange = () => setSnapshot(state);
     listeners.add(onChange);
-
-    const run = () => {
-      // Nobody is looking at a hidden tab, and a sleeping tablet shouldn't be
-      // waking itself to poll.
-      if (document.visibilityState !== "visible") return;
-      void probeConnection();
-    };
-
-    // Take the first reading off the synchronous effect path so the server
-    // render and the first client render still agree.
-    queueMicrotask(run);
-
-    const interval = setInterval(run, PROBE_MS);
     const tick = setInterval(() => setTick((n) => n + 1), 30_000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") run();
-    };
-    // The browser's own signals are still the fastest hint that something
-    // changed — they just aren't trusted on their own.
-    window.addEventListener("online", run);
-    window.addEventListener("offline", run);
-    document.addEventListener("visibilitychange", onVisible);
-
     return () => {
       listeners.delete(onChange);
-      clearInterval(interval);
       clearInterval(tick);
-      window.removeEventListener("online", run);
-      window.removeEventListener("offline", run);
-      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
-  const { reachable, verifiedAt } = snapshot;
+  useEffect(() => {
+    if (!poll) return;
+    startPolling();
+    return stopPolling;
+  }, [poll]);
+
+  const { reachable, verifiedAt, roster } = snapshot;
   const offline = reachable === false;
 
   const isRisky = useCallback(() => {
@@ -173,6 +229,7 @@ export function useConnection(): ConnectionState {
   return {
     offline,
     lastCheckedAt: verifiedAt,
+    roster,
     isRisky,
     recheck: probeConnection,
   };

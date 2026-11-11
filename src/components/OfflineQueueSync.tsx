@@ -24,11 +24,16 @@ import { flushQueue } from "@/lib/offline-sync";
  */
 export function OfflineQueueSync() {
   const { pending, rejected } = useOfflineQueue();
+  const pathname = usePathname();
+  const onSignInScreen = pathname.startsWith("/kiosk") || pathname === "/me";
   // Judged by whether the studio answers, not by `navigator.onLine` — see
   // lib/connectivity. The banner is the one place that difference is visible
-  // to everyone, on every screen.
-  const { offline, lastCheckedAt } = useConnection();
-  const pathname = usePathname();
+  // to everyone, on every screen. It only says anything on a sign-in screen or
+  // while taps are held, so only keep the probe running then — an officer's
+  // laptop left open on the jobs board has no use for a 20s heartbeat.
+  const { offline, lastCheckedAt } = useConnection({
+    poll: onSignInScreen || pending.length > 0,
+  });
   const [dismissed, setDismissed] = useState(false);
   const [conflicts, setConflicts] = useState(0);
   const [conflictsSeen, setConflictsSeen] = useState(false);
@@ -158,7 +163,6 @@ export function OfflineQueueSync() {
   if (offline) {
     // Away from a sign-in screen an offline notice is just noise — nothing there
     // is queueing anything.
-    const onSignInScreen = pathname.startsWith("/kiosk") || pathname === "/me";
     if (!waiting && !onSignInScreen) return null;
     const checked = lastCheckedLabel(lastCheckedAt);
     return (
