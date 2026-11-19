@@ -93,7 +93,7 @@ async function loginEmailForAlias(aliasEmail: string): Promise<string | null> {
  * the PIN is what they tap in with on the studio quick sign-in screen.
  *
  * If the person is already on the roster WITHOUT a login (imported from the
- * studio's sign-ups sheet, or officer-added), the signup claims that row —
+ * board's roster sheet, or officer-added), the signup claims that row —
  * matched by email first, then by name — so their status and history attach
  * to the new account instead of creating a duplicate.
  */

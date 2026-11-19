@@ -1,6 +1,8 @@
 /**
- * Member roster sync. The studio's private "LACC Member session sign-ups/fees"
- * Google sheet is the source of truth for who the members are and whether
+ * Member roster sync. The board's private "Master Member List" Google sheet
+ * (GOOGLE_MEMBERS_SHEET_ID; until 2026-11-18 it pointed at the
+ * "LACC Member session sign-ups/fees" sheet, which turned out to be the wrong
+ * one) is the source of truth for who the members are and whether
  * they're active this session; we mirror it into `members` so the officer
  * roster, announcement emails, and the kiosk all reflect it. Changes members
  * make IN the app flow back the other way — same tab, same columns, only the
@@ -30,7 +32,9 @@
  *   rows become kiosk-only members (no account).
  * - The sheet WINS on active/inactive and the bookkeeping columns (paid,
  *   payment type, policy, photos, comments) — in-app status edits for synced
- *   members last only until the next sync.
+ *   members last only until the next sync. A bookkeeping column the sheet
+ *   doesn't have leaves the stored values alone (the Master Member List has
+ *   none of them, so they hold whatever the old sheet last said).
  * - The APP wins on identity: names are tied to logins, and account holders
  *   manage their own email, so app-side renames and email changes are written
  *   back into the row's existing cells. Kiosk-only members have no login —
@@ -373,6 +377,21 @@ export function reconcile(parsed: ParsedSheet, members: MemberRow[]): SyncPlan {
     members.filter((m) => m.email).map((m) => m.email!.toLowerCase()),
   );
 
+  // Only the bookkeeping columns the sheet actually has are mirrored. A
+  // missing column says nothing about anyone, so the stored values stay put
+  // instead of being blanked — the board's "Master Member List" (2026-11)
+  // carries just names, emails and Active, and wiping Paid/Policy/Photos for
+  // the whole roster on the switch would have been data loss, not a sync.
+  const bookkeeping = (
+    [
+      ["sheet_paid", "paid"],
+      ["sheet_payment_type", "paymentType"],
+      ["sheet_policy", "policy"],
+      ["sheet_photos", "photos"],
+      ["sheet_comments", "comments"],
+    ] as const
+  ).filter(([, key]) => parsed.cols[key] !== -1);
+
   const seenEmails = new Set<string>();
   const seenNames = new Set<string>();
   const matchedIds = new Set<string>();
@@ -405,11 +424,7 @@ export function reconcile(parsed: ParsedSheet, members: MemberRow[]): SyncPlan {
         active: row.active,
         in_sheet: true,
         sheet_name: row.name,
-        sheet_paid: row.paid,
-        sheet_payment_type: row.paymentType,
-        sheet_policy: row.policy,
-        sheet_photos: row.photos,
-        sheet_comments: row.comments,
+        ...Object.fromEntries(bookkeeping.map(([field, key]) => [field, row[key]])),
       });
       if (row.email) takenEmails.add(row.email);
       continue;
@@ -423,13 +438,9 @@ export function reconcile(parsed: ParsedSheet, members: MemberRow[]): SyncPlan {
     const patch: Record<string, unknown> = {};
     if (match.active !== row.active) patch.active = row.active;
     if (!match.in_sheet) patch.in_sheet = true;
-    if (match.sheet_paid !== row.paid) patch.sheet_paid = row.paid;
-    if (match.sheet_payment_type !== row.paymentType) {
-      patch.sheet_payment_type = row.paymentType;
+    for (const [field, key] of bookkeeping) {
+      if (match[field] !== row[key]) patch[field] = row[key];
     }
-    if (match.sheet_policy !== row.policy) patch.sheet_policy = row.policy;
-    if (match.sheet_photos !== row.photos) patch.sheet_photos = row.photos;
-    if (match.sheet_comments !== row.comments) patch.sheet_comments = row.comments;
 
     // Names: the app wins — they're tied to logins. The remembered sheet_name
     // tells us which side moved: if the row still shows the last agreed name,
@@ -541,6 +552,12 @@ export type MembersSheetSyncResult = {
   updated: number;
   /** App→sheet write-back counts (absent on results from before the feature). */
   pushed?: { emails: number; names: number; added: number };
+  /**
+   * Whether the sheet has any Paid/Payment/Policy/Photos/Comments column. When
+   * false, those member fields are frozen at their last synced values, so the
+   * UI mustn't say "edit them in the sheet". Absent on older results = true.
+   */
+  sheetDetails?: boolean;
   flagged: string[];
 };
 
@@ -707,6 +724,13 @@ export async function syncMembersSheet(): Promise<MembersSheetSyncResult> {
     created,
     updated,
     pushed,
+    sheetDetails: [
+      parsed.cols.paid,
+      parsed.cols.paymentType,
+      parsed.cols.policy,
+      parsed.cols.photos,
+      parsed.cols.comments,
+    ].some((index) => index !== -1),
     flagged: flagged.slice(0, 40),
   };
 

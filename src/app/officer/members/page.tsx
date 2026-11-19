@@ -45,6 +45,13 @@ export default async function OfficerMembersPage() {
     }
   }
 
+  const syncStatus = membersSheetConfigured()
+    ? await membersSheetSyncStatus()
+    : null;
+  // False once the roster sheet has no Paid/Policy/Photos columns (the board's
+  // Master Member List): those fields then hold the old sheet's last values.
+  const sheetDetailsLive = syncStatus?.sheetDetails ?? true;
+
   const [membersRes, creditsRes, absencesRes, assignmentsRes, choresRes] =
     await Promise.all([
       supabase
@@ -152,6 +159,7 @@ export default async function OfficerMembersPage() {
             policy: m.sheet_policy,
             photos: m.sheet_photos,
             comments: m.sheet_comments,
+            live: sheetDetailsLive,
           }
         : null,
       availableCredits: memberCredits.filter((c) => c.used_month === null).length,
@@ -180,10 +188,6 @@ export default async function OfficerMembersPage() {
         .map(summarize),
     },
   ];
-
-  const syncStatus = membersSheetConfigured()
-    ? await membersSheetSyncStatus()
-    : null;
 
   // The tab list drives the picker and the "you're on the wrong roster" nudge.
   // Every sync records it, so normally this costs nothing and is at most one
@@ -228,8 +232,11 @@ export default async function OfficerMembersPage() {
             Roster synced from sheet tab &ldquo;{syncStatus.tab}&rdquo; ·{" "}
             {formatStudioDateTime(syncStatus.syncedAt)} · {syncStatus.totalRows}{" "}
             rows ({syncStatus.matched} matched, {syncStatus.created} new
-            {describeWriteBack(syncStatus.pushed)}). Active status and sheet
-            details follow the sheet — edit them there. Name and email changes
+            {describeWriteBack(syncStatus.pushed)}).{" "}
+            {sheetDetailsLive
+              ? "Active status and sheet details follow the sheet — edit them there."
+              : "Active status follows the sheet — edit it there."}{" "}
+            Name and email changes
             made in the app, and members added here, are written back to the
             sheet.
           </p>

@@ -36,6 +36,8 @@ export type SheetInfo = {
   policy: string | null;
   photos: string | null;
   comments: string | null;
+  /** False when the roster sheet no longer has these columns (values frozen). */
+  live: boolean;
 };
 
 /** Everything the members page precomputes for one role='member' row. */
@@ -159,7 +161,9 @@ export function MemberDetail({
           </dl>
           {member.inSheet && (
             <p className="mt-2 text-xs text-muted">
-              Synced from the studio&apos;s sign-ups sheet — edit these there.
+              {member.sheet?.live === false
+                ? "Paid, payment type, policy and photos are the last values from the old sign-ups sheet — the board’s member list doesn’t track them, so they no longer update."
+                : "Synced from the board’s roster sheet — edit these there."}
             </p>
           )}
         </section>

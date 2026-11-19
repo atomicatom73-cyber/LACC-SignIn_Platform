@@ -82,8 +82,9 @@ create unique index if not exists members_email_key
   on public.members (lower(email))
   where email is not null;
 
--- Roster sync from the studio's "LACC Member session sign-ups/fees" Google
--- sheet (src/lib/members-sheet.ts). The sheet is the source of truth for who
+-- Roster sync from the board's "Master Member List" Google sheet (before
+-- 2026-11-18: the "LACC Member session sign-ups/fees" sheet, which supplied
+-- the sheet_* bookkeeping values) (src/lib/members-sheet.ts). The sheet is the source of truth for who
 -- is active: every sync re-applies the sheet's Active column to members it can
 -- match (in_sheet = true) and imports unknown rows as kiosk-only members, so
 -- in-app status edits for synced members only last until the next sync.

@@ -1,6 +1,6 @@
 /**
  * Google service-account auth, shared by the members-roster sync (two-way:
- * reads the private sign-ups sheet and writes app-side changes back) and the
+ * reads the board's private member list and writes app-side changes back) and the
  * sign-in log export (writes the log sheet). A signed JWT is exchanged for a
  * short-lived access token — no OAuth consent and no SDK. What a token can
  * touch is still governed per-file by Drive sharing: the account is an Editor
